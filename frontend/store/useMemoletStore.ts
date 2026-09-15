@@ -18,6 +18,13 @@ export type MemoletData = {
   highlighted?: boolean;
   summary?: string;    // parsed from structured text for display
   displayId?: string;  // short ID like "1_0", "2_3" shown in the UI
+  isTimeSensitive?: boolean;
+  deprecationRisk?: string;
+  temporalAnchor?: string;
+  validityHorizonDays?: number;
+  isDeprecated?: boolean;
+  deprecationReason?: string;
+  suggestedUpdate?: string;
 };
 
 export type MemoletNode = Node<MemoletData, "memolet">;

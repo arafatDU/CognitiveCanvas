@@ -37,6 +37,9 @@ class MockSession:
     def add(self, instance):
         pass
 
+    def delete(self, instance):
+        pass
+
     def commit(self):
         self.committed = True
 

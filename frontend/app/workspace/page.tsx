@@ -32,7 +32,21 @@ function WorkspaceInner() {
   };
 
   /** Convert a MemoletDTO (with displayId) from the API into a ReactFlow node */
-  const memoletToNode = (m: { id: string; text: string; keywords: string[]; color?: string; weight?: number; displayId?: string }) => {
+  const memoletToNode = (m: {
+    id: string;
+    text: string;
+    keywords: string[];
+    color?: string;
+    weight?: number;
+    displayId?: string;
+    is_time_sensitive?: boolean;
+    deprecation_risk?: string;
+    temporal_anchor?: string;
+    validity_horizon_days?: number;
+    is_deprecated?: boolean;
+    deprecation_reason?: string;
+    suggested_update?: string;
+  }) => {
     const parsed = parseMemoletText(m.text);
     return {
       id: m.id,
@@ -48,6 +62,13 @@ function WorkspaceInner() {
         weight: m.weight ?? 1,
         summary: parsed.summary,
         displayId: m.displayId,        // e.g. "1_0", "1_1", "2_0"
+        isTimeSensitive: m.is_time_sensitive,
+        deprecationRisk: m.deprecation_risk,
+        temporalAnchor: m.temporal_anchor,
+        validityHorizonDays: m.validity_horizon_days,
+        isDeprecated: m.is_deprecated,
+        deprecationReason: m.deprecation_reason,
+        suggestedUpdate: m.suggested_update,
       },
       style: { width: 160, height: 160 },
     };

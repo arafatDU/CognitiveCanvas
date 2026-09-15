@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 import uuid
 from datetime import datetime
@@ -14,6 +14,16 @@ class MemoletBase(BaseModel):
     height: Optional[float] = None
     color: Optional[str] = None
     
+    # Temporal Auditing & Staleness Fields
+    is_time_sensitive: bool = False
+    deprecation_risk: Optional[str] = "none"
+    temporal_anchor: Optional[str] = None
+    validity_horizon_days: Optional[int] = 365
+    is_deprecated: bool = False
+    deprecation_reason: Optional[str] = None
+    suggested_update: Optional[str] = None
+    audited_at: Optional[datetime] = None
+    
 class MemoletCreate(MemoletBase):
     pass
 
@@ -26,15 +36,17 @@ class MemoletUpdate(BaseModel):
     width: Optional[float] = None
     height: Optional[float] = None
     color: Optional[str] = None
+    is_time_sensitive: Optional[bool] = None
+    is_deprecated: Optional[bool] = None
+    deprecation_reason: Optional[str] = None
+    suggested_update: Optional[str] = None
     
 class MemoletResponse(MemoletBase):
     id: uuid.UUID
     conversation_id: Optional[uuid.UUID] = None
     created_at: datetime
     last_accessed_at: datetime
-    
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 class SandboxStateUpdate(BaseModel):
     memolet_updates: List["MemoletUpdateWithId"]

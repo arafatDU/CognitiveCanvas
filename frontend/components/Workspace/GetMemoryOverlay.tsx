@@ -2,9 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { memoriesApi, parseMemoletText, type MemoletDTO } from '@/lib/api';
+import { memoriesApi, parseMemoletText, type MemoletDTO, getNextDisplayId } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { X, Search, CheckCircle, Database, ChevronRight, FileText } from 'lucide-react';
+import { X, Search, CheckCircle, Database, ChevronRight, FileText, AlertTriangle, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -13,9 +13,13 @@ import remarkGfm from 'remark-gfm';
 function MemoryDocViewer({
   memolet,
   onClose,
+  onDelete,
+  deleting,
 }: {
   memolet: MemoletDTO;
   onClose: () => void;
+  onDelete?: (id: string) => void;
+  deleting?: boolean;
 }) {
   const parsed = parseMemoletText(memolet.text);
 
@@ -63,6 +67,22 @@ function MemoryDocViewer({
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] space-y-5">
+        {memolet.is_deprecated && (
+          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-1">
+              <AlertTriangle size={13} className="text-amber-600 flex-shrink-0" />
+              <span>Outdated Advice Detected</span>
+            </div>
+            {memolet.deprecation_reason && (
+              <p className="text-amber-800 text-[11px] leading-tight mb-1 font-medium">{memolet.deprecation_reason}</p>
+            )}
+            {memolet.suggested_update && (
+              <p className="text-gray-700 text-[11px] leading-tight">
+                <span className="font-semibold text-amber-900">Modern: </span>{memolet.suggested_update}
+              </p>
+            )}
+          </div>
+        )}
         {tab.isStructured ? (
           <>
             {tab.summary && (
@@ -99,6 +119,23 @@ function MemoryDocViewer({
           </div>
         )}
       </div>
+
+      {onDelete && (
+        <div className="p-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">
+          <span className="text-[10px] text-gray-400 font-mono">
+            {memolet.id.substring(0, 8)}...
+          </span>
+          <button
+            type="button"
+            onClick={() => onDelete(memolet.id)}
+            disabled={deleting}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 hover:text-white bg-red-50 hover:bg-red-600 border border-red-200 hover:border-red-600 rounded-lg transition-all cursor-pointer disabled:opacity-50"
+          >
+            <Trash2 size={12} className={deleting ? 'animate-spin' : ''} />
+            <span>{deleting ? 'Deleting...' : 'Delete Memory'}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -106,7 +143,7 @@ function MemoryDocViewer({
 // ── Main Overlay ────────────────────────────────────────────────────────────
 
 export default function GetMemoryOverlay() {
-  const { leftSidebarOpen, setLeftSidebarOpen, setNodes, nodes, memoriesNeedsSync, setMemoriesNeedsSync } = useMemoletStore();
+  const { leftSidebarOpen, setLeftSidebarOpen, setNodes, nodes, memoriesNeedsSync, setMemoriesNeedsSync, removeMemolet } = useMemoletStore();
 
   const [allMemories, setAllMemories] = useState<MemoletDTO[]>([]);
   const [displayMemories, setDisplayMemories] = useState<MemoletDTO[]>([]);
@@ -116,8 +153,36 @@ export default function GetMemoryOverlay() {
   const [bins, setBins] = useState(12);
   const [clusters, setClusters] = useState(5);
   const [selectedMemory, setSelectedMemory] = useState<MemoletDTO | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const searchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const handleDeleteMemory = useCallback(
+    async (id: string) => {
+      const confirmed = window.confirm(
+        'Are you sure you want to permanently delete this memory? It will be removed from the database and GraphRAG knowledge graph.'
+      );
+      if (!confirmed) return;
+
+      setDeletingId(id);
+      try {
+        await memoriesApi.delete(id);
+        setAllMemories((prev) => prev.filter((m) => m.id !== id));
+        setDisplayMemories((prev) => prev.filter((m) => m.id !== id));
+        if (selectedMemory?.id === id) {
+          setSelectedMemory(null);
+        }
+        removeMemolet(id);
+        setMemoriesNeedsSync(true);
+      } catch (err) {
+        console.error('Failed to delete memory:', err);
+        alert('Failed to delete memory. Please check server logs.');
+      } finally {
+        setDeletingId(null);
+      }
+    },
+    [selectedMemory, removeMemolet, setMemoriesNeedsSync]
+  );
 
   // Load all memories when overlay opens
   useEffect(() => {
@@ -168,6 +233,7 @@ export default function GetMemoryOverlay() {
       const isAlreadyInCanvas = nodes.some((n) => n.id === memolet.id);
       if (!isAlreadyInCanvas) {
         const parsed = parseMemoletText(memolet.text);
+        const displayId = getNextDisplayId(nodes);
         const newNode = {
           id: memolet.id,
           type: 'memolet' as const,
@@ -181,7 +247,14 @@ export default function GetMemoryOverlay() {
             color: memolet.color || '#e0f2fe',
             weight: memolet.weight || 1,
             summary: parsed.summary,
-            displayId: memolet.displayId,
+            displayId: displayId,
+            isTimeSensitive: memolet.is_time_sensitive,
+            deprecationRisk: memolet.deprecation_risk,
+            temporalAnchor: memolet.temporal_anchor,
+            validityHorizonDays: memolet.validity_horizon_days,
+            isDeprecated: memolet.is_deprecated,
+            deprecationReason: memolet.deprecation_reason,
+            suggestedUpdate: memolet.suggested_update,
           },
           style: { width: 160, height: 160 },
         };
@@ -308,9 +381,14 @@ export default function GetMemoryOverlay() {
                         >
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] font-mono font-bold text-gray-500">
-                              {m.displayId ?? `#${m.id.substring(0, 6)}`}
+                              {nodes.find((n) => n.id === m.id)?.data.displayId ?? m.displayId ?? `#${m.id.substring(0, 6)}`}
                             </span>
                             <div className="flex items-center gap-1">
+                              {m.is_deprecated && (
+                                <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1 rounded" title={m.deprecation_reason || "Outdated advice"}>
+                                  ⚠️
+                                </span>
+                              )}
                               {isActive && <CheckCircle size={10} className="text-blue-500" />}
                               {isSelected && <ChevronRight size={10} className="text-blue-600" />}
                             </div>
@@ -341,33 +419,81 @@ export default function GetMemoryOverlay() {
                 </h3>
               </div>
               <div className="overflow-y-auto flex-1 p-3 space-y-2">
-                {displayMemories.map((m) => {
-                  const parsed = parseMemoletText(m.text);
-                  return (
-                    <div
-                      key={m.id}
-                      className="group flex flex-col gap-1.5 p-3 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 transition"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="inline-flex bg-blue-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow-sm tracking-wide">
-                          {m.displayId ?? `#${m.id.substring(0, 6)}`}
-                        </span>
-                        <button
-                          onClick={() => handleAddToSandbox(m)}
-                          className="text-[11px] font-semibold text-blue-600 hover:text-blue-700 opacity-0 group-hover:opacity-100 transition"
-                        >
-                          {nodes.some((n) => n.id === m.id) ? '✓ Added' : '+ Add to Canvas'}
-                        </button>
+                {displayMemories.length === 0 ? (
+                  <div className="h-full flex flex-col items-center justify-center p-4 text-center text-gray-400">
+                    <Database size={22} className="mb-2 text-gray-300" />
+                    <p className="text-xs font-medium">
+                      {searchQuery ? `No memories matching "${searchQuery}"` : 'No memories found in database'}
+                    </p>
+                    {searchQuery && (
+                      <button
+                        type="button"
+                        onClick={() => setSearchQuery('')}
+                        className="mt-1.5 text-[11px] text-blue-500 hover:underline cursor-pointer"
+                      >
+                        Reset search
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  displayMemories.map((m) => {
+                    const parsed = parseMemoletText(m.text);
+                    const canvasNode = nodes.find((n) => n.id === m.id);
+                    const badgeText = canvasNode?.data.displayId ?? m.displayId ?? `#${m.id.substring(0, 6)}`;
+                    return (
+                      <div
+                        key={m.id}
+                        className="group flex flex-col gap-1.5 p-3 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 transition"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-1.5">
+                            <span className="inline-flex bg-blue-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow-sm tracking-wide">
+                              {badgeText}
+                            </span>
+                            {m.is_deprecated && (
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-full" title={m.deprecation_reason || "Outdated advice"}>
+                                <AlertTriangle size={10} />
+                                Stale
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => handleAddToSandbox(m)}
+                              className={cn(
+                                "text-[11px] font-semibold transition cursor-pointer",
+                                nodes.some((n) => n.id === m.id)
+                                  ? "text-emerald-600"
+                                  : "text-blue-600 hover:text-blue-700 opacity-0 group-hover:opacity-100"
+                              )}
+                            >
+                              {nodes.some((n) => n.id === m.id) ? '✓ Added' : '+ Add to Canvas'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteMemory(m.id);
+                              }}
+                              disabled={deletingId === m.id}
+                              className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
+                              title="Permanently delete from database & GraphRAG"
+                            >
+                              <Trash2 size={13} className={deletingId === m.id ? 'animate-spin' : ''} />
+                            </button>
+                          </div>
+                        </div>
+                        {parsed.summary && (
+                          <p className="text-xs text-gray-700 font-medium line-clamp-2">{parsed.summary}</p>
+                        )}
+                        <p className="text-[11px] text-gray-500">
+                          [{m.keywords?.map((k) => `'${k}'`).join(', ')}]
+                        </p>
                       </div>
-                      {parsed.summary && (
-                        <p className="text-xs text-gray-700 font-medium line-clamp-2">{parsed.summary}</p>
-                      )}
-                      <p className="text-[11px] text-gray-500">
-                        [{m.keywords?.map((k) => `'${k}'`).join(', ')}]
-                      </p>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
           </div>
@@ -377,6 +503,8 @@ export default function GetMemoryOverlay() {
             <MemoryDocViewer
               memolet={selectedMemory}
               onClose={() => setSelectedMemory(null)}
+              onDelete={handleDeleteMemory}
+              deleting={deletingId === selectedMemory.id}
             />
           )}
         </div>

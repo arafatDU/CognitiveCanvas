@@ -139,12 +139,14 @@ def search_memories(
 ):
     """
     GraphRAG-augmented hybrid search strictly scoped to the current user:
-    1. Extract keywords from query text
+    1. Extract keywords from query text (including 2+ character terms like SQL, RAG, API)
     2. Retrieve related memolet IDs from Neo4j concept graph (filtered to user)
-    3. Combine with vector similarity search on user's memolets
-    4. Return ranked results
+    3. Direct text and keyword substring matches
+    4. Vector similarity search on user's memolets
+    5. Return ranked matching results
     """
-    if not query.strip():
+    cleaned_query = query.strip()
+    if not cleaned_query:
         return []
 
     all_memolets = db.query(MemoletModel).filter(
@@ -156,7 +158,7 @@ def search_memories(
 
     # --- Step 1: GraphRAG — keyword-based graph traversal for current user ---
     graph_memolet_ids: set[str] = set()
-    query_keywords = [w.lower().strip(".,;:?!") for w in query.split() if len(w) > 3]
+    query_keywords = [w.lower().strip(".,;:?!\"'`()") for w in cleaned_query.split() if len(w) >= 2]
 
     try:
         with neo4j_connector.get_session() as neo4j_session:
@@ -169,7 +171,18 @@ def search_memories(
     except Exception as e:
         logger.warning(f"GraphRAG search failed (continuing with vector only): {e}")
 
-    # --- Step 2: Vector similarity search on user's memolets ---
+    # --- Step 2: Direct text and keyword matching boost ---
+    q_lower = cleaned_query.lower()
+    text_match_ids: list[str] = []
+    for m in all_memolets:
+        m_text = (m.text or "").lower()
+        m_kw = [k.lower() for k in (m.keywords or [])]
+        if q_lower in m_text or any(kw in q_lower or q_lower in kw for kw in m_kw):
+            text_match_ids.append(str(m.id))
+        elif any(qw in m_text for qw in query_keywords if len(qw) >= 3):
+            text_match_ids.append(str(m.id))
+
+    # --- Step 3: Vector similarity search on user's memolets ---
     texts = [m.text for m in all_memolets]
     embeddings = [m.embedding for m in all_memolets]
 
@@ -181,32 +194,69 @@ def search_memories(
         if scored_texts:
             mems, txts, embs = zip(*scored_texts)
             scores = retrieval_service.hybrid_search(
-                query=query,
+                query=cleaned_query,
                 document_texts=list(txts),
                 document_embeddings=list(embs),
             )
             top_indices = np.argsort(scores)[-10:][::-1]
-            scored_ids = [str(mems[i].id) for i in top_indices if scores[i] > 0.0]
+            scored_ids = [str(mems[i].id) for i in top_indices if scores[i] > 0.05]
     except Exception as e:
         logger.warning(f"Vector search failed: {e}")
 
-    # --- Step 3: Merge results (graph hits first, then vector) ---
+    # --- Step 4: Merge results (Text matches & Graph hits first, then vector) ---
     allowed_user_ids = {str(m.id) for m in all_memolets}
     merged_ids: list[str] = []
-    for mid in list(graph_memolet_ids) + scored_ids:
+    
+    # Priority: text matches + graph hits + vector hits
+    for mid in text_match_ids + list(graph_memolet_ids) + scored_ids:
         if mid in allowed_user_ids and mid not in merged_ids:
             merged_ids.append(mid)
 
-    # Fallback: return user's memolets if nothing matched
     if not merged_ids:
-        return all_memolets[:10]
+        return []
 
     # Return ordered results
     id_order = {mid: i for i, mid in enumerate(merged_ids)}
     result_memolets = [m for m in all_memolets if str(m.id) in id_order]
     result_memolets.sort(key=lambda m: id_order.get(str(m.id), 999))
 
-    return result_memolets[:10]
+    return result_memolets[:12]
+
+
+@router.delete("/{memolet_id}")
+def delete_memory(
+    memolet_id: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Permanently deletes a memory from PostgreSQL database and the Neo4j GraphRAG knowledge graph.
+    """
+    import uuid
+
+    try:
+        valid_id = uuid.UUID(memolet_id)
+        db_memolet = db.query(MemoletModel).filter(
+            MemoletModel.id == valid_id,
+            (MemoletModel.user_id == current_user.id) | (MemoletModel.conversation.has(user_id=current_user.id))
+        ).first()
+        if not db_memolet:
+            raise HTTPException(status_code=404, detail="Memolet not found")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid memolet ID")
+
+    # 1. Remove from Neo4j GraphRAG
+    try:
+        with neo4j_connector.get_session() as neo4j_session:
+            graphrag_service.delete_memolet_from_graph(neo4j_session, str(valid_id))
+    except Exception as e:
+        logger.warning(f"Failed to delete memolet {valid_id} from Neo4j: {e}")
+
+    # 2. Remove from PostgreSQL
+    db.delete(db_memolet)
+    db.commit()
+
+    return {"status": "success", "id": str(valid_id), "message": "Memory deleted successfully"}
 
 
 @router.get("/task/{task_id}")

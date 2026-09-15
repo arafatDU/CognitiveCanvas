@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from typing import Optional, List
-from sqlalchemy import String, Float, DateTime, ForeignKey, Table, Column, Integer
+from sqlalchemy import String, Float, DateTime, ForeignKey, Table, Column, Integer, Boolean
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from pgvector.sqlalchemy import Vector
@@ -70,6 +70,16 @@ class Memolet(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     last_accessed_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    
+    # Temporal Auditing & Staleness Columns
+    is_time_sensitive: Mapped[bool] = mapped_column(Boolean, default=False)
+    deprecation_risk: Mapped[Optional[str]] = mapped_column(String, default="none", nullable=True)  # 'none', 'low', 'medium', 'high'
+    temporal_anchor: Mapped[Optional[str]] = mapped_column(String, nullable=True)    # e.g., 'Next.js 13 Pages Router API'
+    validity_horizon_days: Mapped[Optional[int]] = mapped_column(Integer, default=365, nullable=True)
+    is_deprecated: Mapped[bool] = mapped_column(Boolean, default=False)
+    deprecation_reason: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    suggested_update: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    audited_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     
     user: Mapped[Optional["User"]] = relationship(back_populates="memolets")
     conversation: Mapped[Optional["Conversation"]] = relationship(back_populates="memolets")
