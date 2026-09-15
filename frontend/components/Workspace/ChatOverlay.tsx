@@ -1,10 +1,10 @@
 'use client';
 
-import { useState, useRef, useEffect, useCallback } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { MessageSquareText, Send, X, Save, Sparkles, Plus, Trash2, MessageSquare, PanelLeft, CheckSquare, Zap, Check } from 'lucide-react';
+import { MessageSquareText, Send, X, Save, Sparkles, Plus, Trash2, MessageSquare, PanelLeft, CheckSquare, Zap, Check, AlertTriangle, RefreshCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { chatApi, ConversationListResponse, ChatMessageDTO, memoriesApi, MemoletDTO, parseMemoletText } from '@/lib/api';
+import { chatApi, ConversationListResponse, ChatMessageDTO, memoriesApi, MemoletDTO, parseMemoletText, DeprecationWarning, auditorApi, getNextDisplayId } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -14,10 +14,11 @@ type Message = {
   content: string;
   citations?: string[];
   model?: string;
+  deprecationWarnings?: DeprecationWarning[];
 };
 
 export default function ChatOverlay() {
-  const { rightSidebarOpen, setRightSidebarOpen, highlightNode, nodes, setNodes, setMemoriesNeedsSync } = useMemoletStore();
+  const { rightSidebarOpen, setRightSidebarOpen, highlightNode, nodes, setNodes, setMemoriesNeedsSync, updateMemoletData } = useMemoletStore();
 
   const [inputValue, setInputValue] = useState('');
   const [showMention, setShowMention] = useState(false);
@@ -30,6 +31,7 @@ export default function ChatOverlay() {
   const [selectedMessagesForMemory, setSelectedMessagesForMemory] = useState<Set<string>>(new Set());
   const [savingMemory, setSavingMemory] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [updatingMemoletId, setUpdatingMemoletId] = useState<string | null>(null);
 
   // Real-Time Context Suggestion State
   const [suggestions, setSuggestions] = useState<MemoletDTO[]>([]);
@@ -175,14 +177,32 @@ export default function ChatOverlay() {
     };
   }, [inputValue, showMention, dismissed]);
 
+  // Pre-calculate non-colliding sequential displayIds for active suggestions
+  const suggestionDisplayIds = useMemo(() => {
+    const ids: Record<string, string> = {};
+    const reserved: string[] = [];
+
+    for (const m of suggestions) {
+      const existingNode = nodes.find((n) => n.id === m.id);
+      if (existingNode?.data.displayId) {
+        ids[m.id] = existingNode.data.displayId;
+      } else {
+        const nextId = getNextDisplayId(nodes, reserved);
+        ids[m.id] = nextId;
+        reserved.push(nextId);
+      }
+    }
+    return ids;
+  }, [suggestions, nodes]);
+
   // Option 1: Add to Canvas
-  const handleAddToCanvas = useCallback((memolet: MemoletDTO) => {
+  const handleAddToCanvas = useCallback((memolet: MemoletDTO, targetDisplayId?: string) => {
     const existingNode = nodes.find((n) => n.id === memolet.id);
     if (existingNode) {
       return existingNode.data.displayId || existingNode.id;
     }
     const parsed = parseMemoletText(memolet.text);
-    const displayId = memolet.displayId || `${Math.floor(nodes.length / 10) + 1}_${nodes.length % 10}`;
+    const displayId = targetDisplayId || getNextDisplayId(nodes);
     const newNode = {
       id: memolet.id,
       type: 'memolet' as const,
@@ -197,6 +217,13 @@ export default function ChatOverlay() {
         weight: memolet.weight || 1,
         summary: parsed.summary,
         displayId: displayId,
+        isTimeSensitive: memolet.is_time_sensitive,
+        deprecationRisk: memolet.deprecation_risk,
+        temporalAnchor: memolet.temporal_anchor,
+        validityHorizonDays: memolet.validity_horizon_days,
+        isDeprecated: memolet.is_deprecated,
+        deprecationReason: memolet.deprecation_reason,
+        suggestedUpdate: memolet.suggested_update,
       },
       style: { width: 160, height: 160 },
     };
@@ -205,8 +232,8 @@ export default function ChatOverlay() {
   }, [nodes, setNodes]);
 
   // Option 2: Direct Inject (auto-adds to canvas & appends @displayId to prompt)
-  const handleDirectInject = useCallback((memolet: MemoletDTO) => {
-    const displayId = handleAddToCanvas(memolet);
+  const handleDirectInject = useCallback((memolet: MemoletDTO, targetDisplayId?: string) => {
+    const displayId = handleAddToCanvas(memolet, targetDisplayId);
     const mentionTag = `@${displayId}`;
     
     setInputValue((prev) => {
@@ -279,14 +306,15 @@ export default function ChatOverlay() {
         } else if (currentConversationId && messages.length === 0) {
           fetchConversations();
         }
-        if (data.citations || data.model) {
+        if (data.citations || data.model || data.deprecation_warnings) {
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === aiMsgId
                 ? {
                     ...msg,
                     citations: data.citations?.flat() ?? [],
-                    model: data.model ?? selectedModel
+                    model: data.model ?? selectedModel,
+                    deprecationWarnings: data.deprecation_warnings ?? [],
                   }
                 : msg
             )
@@ -579,9 +607,73 @@ export default function ChatOverlay() {
                 )}
               >
                 {msg.role === 'ai' ? (
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                    {msg.content}
-                  </ReactMarkdown>
+                  <>
+                    {msg.deprecationWarnings && msg.deprecationWarnings.length > 0 && (
+                      <div className="mb-3 p-2.5 bg-amber-50 border border-amber-200 rounded-lg text-xs not-prose">
+                        <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-1.5">
+                          <AlertTriangle size={13} className="text-amber-600 flex-shrink-0" />
+                          <span>Temporal Staleness Warning</span>
+                        </div>
+                        <div className="space-y-1.5">
+                          {msg.deprecationWarnings.map((w, wi) => {
+                            const citedNode = nodes.find((n) => n.id === w.memolet_id);
+                            const display = citedNode?.data.displayId ?? w.memolet_id.substring(0, 6);
+                            const isUpdating = updatingMemoletId === w.memolet_id;
+                            const isUpdated = citedNode && !citedNode.data.isDeprecated;
+                            return (
+                              <div key={wi} className="text-[11px] text-amber-800 leading-snug flex flex-col gap-1 pb-1 border-b border-amber-200/50 last:border-b-0 last:pb-0">
+                                <div className="flex items-center justify-between">
+                                  <span className="font-semibold text-amber-900">Memory [{display}]</span>
+                                  {isUpdated ? (
+                                    <span className="text-[10px] text-green-700 font-semibold bg-green-50 px-1.5 py-0.5 rounded border border-green-200">
+                                      ✓ Updated
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={isUpdating}
+                                      onClick={async () => {
+                                        setUpdatingMemoletId(w.memolet_id);
+                                        try {
+                                          const res = await auditorApi.refresh(w.memolet_id);
+                                          const parsed = parseMemoletText(res.text);
+                                          updateMemoletData(w.memolet_id, {
+                                            text: res.text,
+                                            summary: res.summary || parsed.summary,
+                                            isDeprecated: false,
+                                            deprecationReason: undefined,
+                                            suggestedUpdate: undefined,
+                                            temporalAnchor: res.temporal_anchor,
+                                          });
+                                        } catch (err) {
+                                          console.error('Failed to refresh from chat warning:', err);
+                                        } finally {
+                                          setUpdatingMemoletId(null);
+                                        }
+                                      }}
+                                      className="inline-flex items-center gap-1 text-[10px] font-semibold bg-amber-200/90 hover:bg-amber-300 text-amber-900 px-2 py-0.5 rounded-md transition cursor-pointer shadow-2xs disabled:opacity-50"
+                                    >
+                                      <RefreshCw size={10} className={isUpdating ? 'animate-spin' : ''} />
+                                      <span>{isUpdating ? 'Updating...' : `Update [${display}]`}</span>
+                                    </button>
+                                  )}
+                                </div>
+                                <div className="text-amber-800 font-medium">{w.reason}</div>
+                                {w.suggested_update && (
+                                  <div className="text-gray-700 mt-0.5 font-normal bg-white/70 p-1.5 rounded border border-amber-200/60">
+                                    💡 <span className="font-semibold text-amber-900">Modern: </span>{w.suggested_update}
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                      {msg.content}
+                    </ReactMarkdown>
+                  </>
                 ) : (
                   msg.content
                 )}
@@ -668,7 +760,7 @@ export default function ChatOverlay() {
                   const summary = parsed.summary || m.text.slice(0, 100);
                   const existingNode = nodes.find((n) => n.id === m.id);
                   const isOnCanvas = Boolean(existingNode);
-                  const displayId = existingNode?.data.displayId || m.displayId || '1_0';
+                  const displayId = suggestionDisplayIds[m.id] || existingNode?.data.displayId || getNextDisplayId(nodes);
                   const isInPrompt = inputValue.includes(`@${displayId}`) || inputValue.includes(`@${m.id}`);
 
                   return (
@@ -688,6 +780,12 @@ export default function ChatOverlay() {
                           >
                             📝 {displayId}
                           </span>
+                          {m.is_deprecated && (
+                            <span className="text-[10px] font-bold bg-amber-100 text-amber-800 border border-amber-300 px-1.5 py-0.5 rounded-full flex items-center gap-1">
+                              <AlertTriangle size={9} />
+                              Stale
+                            </span>
+                          )}
                           {m.keywords && m.keywords.length > 0 && (
                             <div className="flex items-center gap-1 overflow-hidden">
                               {m.keywords.slice(0, 3).map((k, idx) => (
@@ -706,7 +804,7 @@ export default function ChatOverlay() {
                       <div className="flex items-center gap-1.5 flex-shrink-0 self-center">
                         {/* Option 1: Add to Canvas */}
                         <button
-                          onClick={() => handleAddToCanvas(m)}
+                          onClick={() => handleAddToCanvas(m, displayId)}
                           disabled={isOnCanvas}
                           className={cn(
                             "px-2.5 py-1 text-xs font-semibold rounded-lg transition flex items-center gap-1 shadow-2xs",
@@ -731,7 +829,7 @@ export default function ChatOverlay() {
 
                         {/* Option 2: Direct Inject */}
                         <button
-                          onClick={() => handleDirectInject(m)}
+                          onClick={() => handleDirectInject(m, displayId)}
                           disabled={isInPrompt}
                           className={cn(
                             "px-2.5 py-1 text-xs font-semibold rounded-lg transition flex items-center gap-1 shadow-2xs",

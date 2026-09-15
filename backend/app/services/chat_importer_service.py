@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app.models.memolet import User, Conversation, ChatMessage, Memolet as MemoletModel
 from app.services.retrieval import retrieval_service
 from app.services.graphrag import graphrag_service
+from app.services.temporal_auditor_service import temporal_auditor_service
 from app.db.neo4j import neo4j_connector
 from app.core.config import settings
 
@@ -439,33 +440,46 @@ class ChatImporterService:
         # --- Destination 2: Long-Term Memory (Postgres pgvector + Neo4j Graph) ---
         saved_memolets = []
         if save_to_memory:
+            # Single-pass unified Summarization & Temporal Deprecation Audit
+            audited_metadata = []
+            if generate_ai_summary and settings.GEMINI_API_KEY:
+                try:
+                    audited_metadata = temporal_auditor_service.audit_and_summarize_pairs(turns)
+                except Exception as e:
+                    logger.warning(f"AI batched audit fallback during import: {e}")
+                    audited_metadata = []
+
             with neo4j_connector.get_session() as neo4j_session:
-                for turn in turns:
+                for idx, turn in enumerate(turns):
                     u_text = turn.get("user", "").strip()
                     a_text = turn.get("ai", "").strip()
                     if not u_text and not a_text:
                         continue
 
-                    # Generate summary
-                    summary = ""
-                    if generate_ai_summary and settings.GEMINI_API_KEY:
-                        try:
-                            from litellm import completion
-                            summary_prompt = f"Summarize this interaction in 1-2 concise sentences:\nUser: {u_text}\nAI: {a_text}"
-                            resp = completion(
-                                model="gemini/gemini-2.5-flash",
-                                messages=[{"role": "user", "content": summary_prompt}],
-                                temperature=0.3
-                            )
-                            summary = resp["choices"][0]["message"]["content"].strip()
-                        except Exception as e:
-                            logger.warning(f"AI summarization fallback: {e}")
-                            summary = self.generate_deterministic_summary(u_text, a_text)
+                    meta = audited_metadata[idx] if idx < len(audited_metadata) else None
+                    if meta:
+                        summary = meta.get("summary") or self.generate_deterministic_summary(u_text, a_text)
+                        keywords = meta.get("keywords") or self.extract_keywords(f"{summary} {u_text}")
+                        is_sensitive = meta.get("is_time_sensitive", False)
+                        dep_risk = meta.get("deprecation_risk", "none")
+                        temp_anchor = meta.get("temporal_anchor")
+                        validity_days = meta.get("validity_horizon_days", 365)
+                        is_dep = meta.get("is_deprecated", False)
+                        dep_reason = meta.get("deprecation_reason")
+                        sug_update = meta.get("suggested_update")
                     else:
                         summary = self.generate_deterministic_summary(u_text, a_text)
+                        keywords = self.extract_keywords(f"{summary} {u_text}")
+                        h_res = temporal_auditor_service.scan_temporal_heuristics(f"{u_text}\n{a_text}")
+                        is_sensitive = h_res["is_time_sensitive"]
+                        dep_risk = h_res["risk"]
+                        temp_anchor = ", ".join(h_res.get("matched_tech", [])) if is_sensitive else None
+                        validity_days = 180 if is_sensitive else 365
+                        is_dep = False
+                        dep_reason = None
+                        sug_update = None
 
                     serialized_text = f"Summary: {summary}\nUser: {u_text}\nAI: {a_text}"
-                    keywords = self.extract_keywords(f"{summary} {u_text}")
 
                     # Generate vector embedding locally
                     try:
@@ -483,6 +497,13 @@ class ChatImporterService:
                         keywords=keywords,
                         embedding=embedding,
                         color=assigned_color,
+                        is_time_sensitive=is_sensitive,
+                        deprecation_risk=dep_risk,
+                        temporal_anchor=temp_anchor,
+                        validity_horizon_days=validity_days,
+                        is_deprecated=is_dep,
+                        deprecation_reason=dep_reason,
+                        suggested_update=sug_update,
                     )
                     db.add(db_memolet)
                     db.commit()
@@ -497,7 +518,9 @@ class ChatImporterService:
                     saved_memolets.append({
                         "id": str(db_memolet.id),
                         "summary": summary,
-                        "color": assigned_color
+                        "color": assigned_color,
+                        "is_time_sensitive": db_memolet.is_time_sensitive,
+                        "is_deprecated": db_memolet.is_deprecated,
                     })
 
         return {

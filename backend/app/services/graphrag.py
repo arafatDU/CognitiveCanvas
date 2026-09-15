@@ -21,14 +21,37 @@ class GraphRAGService:
         '''
         neo4j_session.run(query, id=str(memolet.id), text=memolet.text, keywords=memolet.keywords or [], user_id=uid)
 
+    def delete_memolet_from_graph(self, neo4j_session, memolet_id: str):
+        """
+        Deletes the memolet node and its concept relationships from Neo4j.
+        Also cleans up any orphan concepts that no longer connect to any Memolet.
+        """
+        query = '''
+        MATCH (m:Memolet {id: $id})
+        DETACH DELETE m
+        '''
+        neo4j_session.run(query, id=str(memolet_id))
+
+        cleanup_query = '''
+        MATCH (k:Concept)
+        WHERE NOT (k)<-[:HAS_CONCEPT]-()
+        DELETE k
+        '''
+        try:
+            neo4j_session.run(cleanup_query)
+        except Exception:
+            pass
+
     def retrieve_context_subgraph(self, neo4j_session, query_keywords: list[str], user_id: str = None):
         """
         Retrieves local neighborhood around the matched keywords, filtered to the specific user.
+        Supports case-insensitive and substring concept matching.
         """
         uid = str(user_id) if user_id else None
         query = '''
         MATCH (k:Concept)-[:HAS_CONCEPT]-(m:Memolet)
-        WHERE k.name IN $keywords AND ($user_id IS NULL OR m.user_id = $user_id)
+        WHERE ANY(kw IN $keywords WHERE toLower(k.name) CONTAINS toLower(kw) OR toLower(kw) CONTAINS toLower(k.name))
+          AND ($user_id IS NULL OR m.user_id = $user_id)
         RETURN m.id AS memolet_id, collect(k.name) as concepts, m.text as string_content
         '''
         result = neo4j_session.run(query, keywords=query_keywords, user_id=uid)

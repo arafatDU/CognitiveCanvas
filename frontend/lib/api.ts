@@ -116,17 +116,66 @@ export interface MemoletDTO {
   color?: string;
   weight?: number;
   displayId?: string; // computed client-side: "1_0", "1_1", "2_0", ...
+  is_time_sensitive?: boolean;
+  deprecation_risk?: string;
+  temporal_anchor?: string;
+  validity_horizon_days?: number;
+  is_deprecated?: boolean;
+  deprecation_reason?: string;
+  suggested_update?: string;
+  audited_at?: string;
+}
+
+/** Convert a displayId like "1_0" to its 0-indexed sequential integer */
+export function displayIdToIndex(displayId: string): number {
+  const match = displayId.match(/^(\d+)_(\d+)$/);
+  if (!match) return -1;
+  const group = parseInt(match[1], 10);
+  const offset = parseInt(match[2], 10);
+  return (group - 1) * 10 + offset;
+}
+
+/** Convert a 0-indexed sequential integer to displayId ("1_0", "1_1", ..., "2_0") */
+export function indexToDisplayId(index: number): string {
+  const group = Math.floor(index / 10) + 1;
+  const offset = index % 10;
+  return `${group}_${offset}`;
 }
 
 /**
- * Assigns short human-readable IDs ("1_0", "1_1", ..., "2_0") to an ordered
- * array of memolets. Index 0 → "1_0", index 9 → "1_9", index 10 → "2_0", etc.
- * Call this once after fetching from the API to get stable short IDs.
+ * Computes the next available unique displayId that does not collide
+ * with any existing nodes on the canvas or previously assigned ids.
  */
+export function getNextDisplayId(
+  existingNodes: { data?: { displayId?: string } }[],
+  reservedIds: (string | undefined)[] = []
+): string {
+  const usedIndices = new Set<number>();
+  for (const node of existingNodes) {
+    if (node.data?.displayId) {
+      const idx = displayIdToIndex(node.data.displayId);
+      if (idx >= 0) usedIndices.add(idx);
+    }
+  }
+  for (const rid of reservedIds) {
+    if (rid) {
+      const idx = displayIdToIndex(rid);
+      if (idx >= 0) usedIndices.add(idx);
+    }
+  }
+
+  let candidate = 0;
+  while (usedIndices.has(candidate)) {
+    candidate++;
+  }
+  return indexToDisplayId(candidate);
+}
+
+/** Legacy helper kept for backwards compatibility if needed */
 export function assignDisplayIds<T extends MemoletDTO>(memolets: T[]): T[] {
   return memolets.map((m, i) => ({
     ...m,
-    displayId: `${Math.floor(i / 10) + 1}_${i % 10}`,
+    displayId: indexToDisplayId(i),
   }));
 }
 
@@ -153,12 +202,17 @@ export function parseMemoletText(text: string): {
 }
 
 export const memoriesApi = {
-  /** Returns all memolets with stable short display IDs assigned */
+  /** Returns all stored memolets from the database */
   getAll: () =>
-    apiFetch<MemoletDTO[]>('/memories/').then(assignDisplayIds),
-  /** GraphRAG search — results also get display IDs based on their returned order */
+    apiFetch<MemoletDTO[]>('/memories/'),
+  /** GraphRAG search — returns ranked matching memolets */
   search: (query: string) =>
-    apiFetch<MemoletDTO[]>(`/memories/search?query=${encodeURIComponent(query)}`).then(assignDisplayIds),
+    apiFetch<MemoletDTO[]>(`/memories/search?query=${encodeURIComponent(query)}`),
+  /** Permanently delete a memory from PostgreSQL and Neo4j */
+  delete: (id: string) =>
+    apiFetch<{ status: string; id: string; message: string }>(`/memories/${id}`, {
+      method: 'DELETE',
+    }),
   seedDemo: () =>
     apiFetch<{ message: string; created?: { id: string; summary: string }[] }>(
       '/memories/seed-demo',
@@ -193,6 +247,13 @@ export interface ChatRequest {
   conversation_id?: string;
 }
 
+export interface DeprecationWarning {
+  memolet_id: string;
+  temporal_anchor?: string;
+  reason: string;
+  suggested_update?: string;
+}
+
 export interface ChatResponse {
   reply: string;
   sentences: string[];
@@ -201,12 +262,36 @@ export interface ChatResponse {
   conflict_warning: boolean;
   conversation_id: string;
   model?: string;
+  deprecation_warnings?: DeprecationWarning[];
 }
 
 export interface MemorySaveRequest {
   messages: { user: string; ai: string }[];
   conversation_id?: string;
 }
+
+export const auditorApi = {
+  getTimeGrounding: () =>
+    apiFetch<{ current_year: number; current_date_str: string; current_full_date: string; now_iso: string }>('/auditor/time-grounding'),
+  verify: (memoletId: string) =>
+    apiFetch<{
+      id: string;
+      is_time_sensitive: boolean;
+      temporal_anchor?: string;
+      is_deprecated: boolean;
+      deprecation_reason?: string;
+      suggested_update?: string;
+      audited_at?: string;
+    }>(`/auditor/verify/${memoletId}`, { method: 'POST' }),
+  refresh: (memoletId: string) =>
+    apiFetch<{
+      status: string;
+      id: string;
+      summary: string;
+      text: string;
+      temporal_anchor?: string;
+    }>(`/auditor/refresh/${memoletId}`, { method: 'POST' }),
+};
 
 export const chatApi = {
   send: (payload: ChatRequest) =>
@@ -217,7 +302,14 @@ export const chatApi = {
   sendStream: async (
     payload: ChatRequest,
     onToken: (token: string) => void,
-    onComplete: (data: { conversation_id: string; citations?: string[][]; model?: string }) => void,
+    onComplete: (data: {
+      conversation_id: string;
+      citations?: string[][];
+      model?: string;
+      confidence_heatmap?: number[];
+      conflict_warning?: boolean;
+      deprecation_warnings?: DeprecationWarning[];
+    }) => void,
     onError: (err: Error) => void
   ) => {
     const token = await getToken();

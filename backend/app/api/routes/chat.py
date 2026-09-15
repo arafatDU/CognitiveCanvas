@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import json
@@ -14,6 +15,7 @@ from app.services.llm_router import llm_router
 from app.services.trust_service import trust_service
 from app.services.retrieval import retrieval_service
 from app.services.graphrag import graphrag_service
+from app.services.temporal_auditor_service import temporal_auditor_service
 from pydantic import BaseModel
 import random
 
@@ -36,6 +38,7 @@ class ChatResponse(BaseModel):
     conflict_warning: bool
     conversation_id: str
     model: Optional[str] = None
+    deprecation_warnings: List[Dict[str, Any]] = []
 
 
 
@@ -100,6 +103,26 @@ def generate_chat(
     contents = [m.text for m in memolets]
     active_ids = [str(m.id) for m in memolets]
 
+    # Check temporal staleness & deprecation on active memolets
+    deprecation_warnings = []
+    for m in memolets:
+        if getattr(m, "is_deprecated", False):
+            deprecation_warnings.append({
+                "memolet_id": str(m.id),
+                "temporal_anchor": getattr(m, "temporal_anchor", None),
+                "reason": getattr(m, "deprecation_reason", None) or "Outdated context detected",
+                "suggested_update": getattr(m, "suggested_update", None)
+            })
+        elif getattr(m, "is_time_sensitive", False):
+            v_res = temporal_auditor_service.verify_memolet_staleness(m, db)
+            if v_res.get("is_deprecated"):
+                deprecation_warnings.append({
+                    "memolet_id": str(m.id),
+                    "temporal_anchor": getattr(m, "temporal_anchor", None),
+                    "reason": v_res.get("deprecation_reason") or "Outdated context detected",
+                    "suggested_update": v_res.get("suggested_update")
+                })
+
     # 2. Check conflicts
     conflict_warning = trust_service.evaluate_conflict(contents)
 
@@ -111,6 +134,17 @@ def generate_chat(
             "Answer the user's prompt directly, accurately, and thoroughly using the provided Memory Context where relevant.\n\n"
             "Memory Context:\n" + "\n---\n".join(contents)
         )
+        if deprecation_warnings:
+            time_info = temporal_auditor_service.get_current_time_grounding()
+            warn_bullets = "\n".join([
+                f"- Memory {w['memolet_id'][:6]}: {w['reason']}. Modern recommendation: {w['suggested_update'] or 'Follow current best practices.'}"
+                for w in deprecation_warnings
+            ])
+            system_prompt += (
+                f"\n\n[TEMPORAL AUDITOR NOTICE - Current Date: {time_info['current_date_str']}]:\n"
+                f"The following active memory context contains deprecated or outdated syntax:\n{warn_bullets}\n"
+                f"You MUST prioritize modern {time_info['current_date_str']} best practices and explicitly caution the user if the memory advice is outdated."
+            )
         llm_messages.append({"role": "system", "content": system_prompt})
 
     # Load recent conversation history
@@ -158,7 +192,8 @@ def generate_chat(
         citations=citations,
         conflict_warning=conflict_warning,
         conversation_id=str(conversation.id),
-        model=req.model or llm_router.default_model
+        model=req.model or llm_router.default_model,
+        deprecation_warnings=deprecation_warnings
     )
 
 
@@ -203,6 +238,27 @@ def generate_chat_stream(
 
     contents = [m.text for m in memolets]
     active_ids = [str(m.id) for m in memolets]
+
+    # Check temporal staleness & deprecation on active memolets
+    deprecation_warnings = []
+    for m in memolets:
+        if getattr(m, "is_deprecated", False):
+            deprecation_warnings.append({
+                "memolet_id": str(m.id),
+                "temporal_anchor": getattr(m, "temporal_anchor", None),
+                "reason": getattr(m, "deprecation_reason", None) or "Outdated context detected",
+                "suggested_update": getattr(m, "suggested_update", None)
+            })
+        elif getattr(m, "is_time_sensitive", False):
+            v_res = temporal_auditor_service.verify_memolet_staleness(m, db)
+            if v_res.get("is_deprecated"):
+                deprecation_warnings.append({
+                    "memolet_id": str(m.id),
+                    "temporal_anchor": getattr(m, "temporal_anchor", None),
+                    "reason": v_res.get("deprecation_reason") or "Outdated context detected",
+                    "suggested_update": v_res.get("suggested_update")
+                })
+
     conflict_warning = trust_service.evaluate_conflict(contents)
 
     llm_messages = []
@@ -212,6 +268,17 @@ def generate_chat_stream(
             "Answer the user's prompt directly, accurately, and thoroughly using the provided Memory Context where relevant.\n\n"
             "Memory Context:\n" + "\n---\n".join(contents)
         )
+        if deprecation_warnings:
+            time_info = temporal_auditor_service.get_current_time_grounding()
+            warn_bullets = "\n".join([
+                f"- Memory {w['memolet_id'][:6]}: {w['reason']}. Modern recommendation: {w['suggested_update'] or 'Follow current best practices.'}"
+                for w in deprecation_warnings
+            ])
+            system_prompt += (
+                f"\n\n[TEMPORAL AUDITOR NOTICE - Current Date: {time_info['current_date_str']}]:\n"
+                f"The following active memory context contains deprecated or outdated syntax:\n{warn_bullets}\n"
+                f"You MUST prioritize modern {time_info['current_date_str']} best practices and explicitly caution the user if the memory advice is outdated."
+            )
         llm_messages.append({"role": "system", "content": system_prompt})
 
     recent_messages = db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation.id).order_by(ChatMessage.created_at.asc()).all()
@@ -257,7 +324,8 @@ def generate_chat_stream(
             "citations": citations,
             "confidence_heatmap": heatmap,
             "conflict_warning": conflict_warning,
-            "model": selected_model
+            "model": selected_model,
+            "deprecation_warnings": deprecation_warnings
         }
         yield f"data: {json.dumps(final_payload)}\n\n"
 
@@ -292,73 +360,54 @@ def save_chat_to_memory(
     current_user: User = Depends(deps.get_current_user),
 ):
     """
-    Synchronously saves multiple (user msg + AI response) pairs into the memory bank.
-    For each pair:
-      1. Summarizes with Gemini 2.5-flash
-      2. Encodes embedding
-      3. Saves Memolet to Postgres
-      4. Updates Neo4j knowledge graph
+    Saves multiple (user msg + AI response) pairs into the memory bank in ONE UNIFIED PASS:
+      1. Single-pass unified Summarization & Temporal Deprecation Audit via gemini-3.5-flash-lite
+      2. Encodes embeddings
+      3. Saves Memolet with temporal metadata to Postgres
+      4. Updates Neo4j knowledge graph with multi-tenant user scoping
     """
-    from litellm import completion
-
     if not req.messages:
         raise HTTPException(status_code=400, detail="No messages provided to save.")
 
-    summary_model = llm_router.default_model
+    valid_pairs = []
+    for pair in req.messages:
+        u = pair.get("user", "").strip()
+        a = pair.get("ai", "").strip()
+        if u or a:
+            valid_pairs.append({"user": u, "ai": a})
+
+    if not valid_pairs:
+        raise HTTPException(status_code=400, detail="No non-empty messages to save.")
+
+    # 1. Single-Pass Unified Summarization & Deprecation Audit (1 LLM call)
+    audited_pairs = temporal_auditor_service.audit_and_summarize_pairs(valid_pairs)
+
     processed = []
+    PASTEL_COLORS = [
+        "#fef08a", "#fef9c3", "#bbf7d0", "#d9f99d", 
+        "#bfdbfe", "#e0f2fe", "#fbcfe8", "#fce7f3", 
+        "#e9d5ff", "#f3e8ff", "#fed7aa", "#ffedd5"
+    ]
 
     try:
         with neo4j_connector.get_session() as neo4j_session:
-            for pair in req.messages:
-                user_msg = pair.get("user", "").strip()
-                ai_msg = pair.get("ai", "").strip()
-
-                if not user_msg and not ai_msg:
-                    continue
-
-                # --- Summarize ---
-                summary_prompt = (
-                    f"Summarize the following conversation in 1-2 concise sentences:\n"
-                    f"User: {user_msg}\nAI: {ai_msg}"
-                )
-                try:
-                    resp = completion(
-                        model=summary_model,
-                        messages=[{"role": "user", "content": summary_prompt}],
-                        temperature=0.3,
-                    )
-                    summary = resp["choices"][0]["message"]["content"].strip()
-                except Exception as e:
-                    logger.error(f"Summarization failed: {e}")
-                    summary = f"{user_msg[:80]}..."
-
-                # --- Serialize ---
+            for pair, audit_meta in zip(valid_pairs, audited_pairs):
+                user_msg = pair["user"]
+                ai_msg = pair["ai"]
+                summary = audit_meta.get("summary") or f"{user_msg[:80]}..."
                 serialized_text = f"Summary: {summary}\nUser: {user_msg}\nAI: {ai_msg}"
+                keywords = audit_meta.get("keywords") or []
 
-                # --- Keywords from summary ---
-                keywords = list(
-                    dict.fromkeys(
-                        w.strip(".,;:?!\"'") for w in summary.split() if len(w.strip(".,;:?!\"'")) > 4
-                    )
-                )[:8]
-
-                # --- Embedding ---
+                # Embedding
                 try:
                     embedding = retrieval_service.encode_text(serialized_text)
                 except Exception as e:
                     logger.warning(f"Embedding failed: {e}")
                     embedding = None
 
-                # --- Persist to Postgres ---
-                conversation_id = req.conversation_id if req.conversation_id else None
-                
-                PASTEL_COLORS = [
-                    "#fef08a", "#fef9c3", "#bbf7d0", "#d9f99d", 
-                    "#bfdbfe", "#e0f2fe", "#fbcfe8", "#fce7f3", 
-                    "#e9d5ff", "#f3e8ff", "#fed7aa", "#ffedd5"
-                ]
                 assigned_color = random.choice(PASTEL_COLORS)
-                
+                conversation_id = req.conversation_id if req.conversation_id else None
+
                 db_memolet = MemoletModel(
                     user_id=current_user.id,
                     conversation_id=conversation_id,
@@ -366,18 +415,33 @@ def save_chat_to_memory(
                     keywords=keywords,
                     embedding=embedding,
                     color=assigned_color,
+                    is_time_sensitive=audit_meta.get("is_time_sensitive", False),
+                    deprecation_risk=audit_meta.get("deprecation_risk", "none"),
+                    temporal_anchor=audit_meta.get("temporal_anchor"),
+                    validity_horizon_days=audit_meta.get("validity_horizon_days", 365),
+                    is_deprecated=audit_meta.get("is_deprecated", False),
+                    deprecation_reason=audit_meta.get("deprecation_reason"),
+                    suggested_update=audit_meta.get("suggested_update"),
+                    audited_at=datetime.utcnow() if audit_meta.get("is_time_sensitive") else None,
                 )
                 db.add(db_memolet)
                 db.commit()
                 db.refresh(db_memolet)
 
-                # --- Update GraphRAG (Neo4j) ---
+                # Update GraphRAG (Neo4j)
                 try:
                     graphrag_service.add_concepts_to_graph(neo4j_session, db_memolet, user_id=str(current_user.id))
                 except Exception as e:
                     logger.warning(f"Neo4j update failed for memolet {db_memolet.id}: {e}")
 
-                processed.append({"id": str(db_memolet.id), "summary": summary})
+                processed.append({
+                    "id": str(db_memolet.id),
+                    "summary": summary,
+                    "is_time_sensitive": db_memolet.is_time_sensitive,
+                    "is_deprecated": db_memolet.is_deprecated,
+                    "deprecation_risk": db_memolet.deprecation_risk,
+                    "temporal_anchor": db_memolet.temporal_anchor,
+                })
 
     except Exception as e:
         db.rollback()

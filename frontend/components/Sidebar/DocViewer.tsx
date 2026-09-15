@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { parseMemoletText } from '@/lib/api';
+import { parseMemoletText, auditorApi } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { X, FileText } from 'lucide-react';
+import { X, FileText, AlertTriangle, RefreshCw, Clock } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -23,12 +23,39 @@ function splitIntoPairs(text: string) {
 }
 
 export default function DocViewer() {
-  const { nodes, selectedNodeId, setSelectedNodeId } = useMemoletStore();
+  const { nodes, selectedNodeId, setSelectedNodeId, updateMemoletData } = useMemoletStore();
   const [activeTab, setActiveTab] = useState(0);
+  const [refreshing, setRefreshing] = useState(false);
 
   const selectedNode = nodes.find((n) => n.id === selectedNodeId);
   const pairs = selectedNode ? splitIntoPairs(selectedNode.data.text) : [];
   const tab = pairs[activeTab] ?? pairs[0];
+
+  const isDeprecated = selectedNode?.data.isDeprecated;
+  const deprecationReason = selectedNode?.data.deprecationReason;
+  const suggestedUpdate = selectedNode?.data.suggestedUpdate;
+  const temporalAnchor = selectedNode?.data.temporalAnchor;
+
+  const handleRefresh = async () => {
+    if (!selectedNode || refreshing) return;
+    setRefreshing(true);
+    try {
+      const res = await auditorApi.refresh(selectedNode.id);
+      const parsed = parseMemoletText(res.text);
+      updateMemoletData(selectedNode.id, {
+        text: res.text,
+        summary: res.summary || parsed.summary,
+        isDeprecated: false,
+        deprecationReason: undefined,
+        suggestedUpdate: undefined,
+        temporalAnchor: res.temporal_anchor,
+      });
+    } catch (err) {
+      console.error('Failed to refresh memory in DocViewer:', err);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   if (!selectedNodeId || !selectedNode) {
     return (
@@ -91,7 +118,54 @@ export default function DocViewer() {
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd]">
+      <div className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] space-y-5">
+        {/* Deprecation Warning & 1-Click Update Banner */}
+        {isDeprecated && (
+          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-xs">
+            <div className="flex items-center justify-between gap-2 mb-2">
+              <div className="flex items-center gap-1.5 text-amber-900 font-bold text-xs">
+                <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
+                <span>Outdated Advice Detected</span>
+              </div>
+              {temporalAnchor && (
+                <span className="text-[10px] text-amber-800 bg-amber-200/70 font-mono px-2 py-0.5 rounded">
+                  {temporalAnchor}
+                </span>
+              )}
+            </div>
+
+            {deprecationReason && (
+              <p className="text-xs text-amber-900 leading-relaxed mb-2 font-medium">
+                {deprecationReason}
+              </p>
+            )}
+
+            {suggestedUpdate && (
+              <div className="text-xs text-gray-800 bg-white/90 p-2.5 rounded-lg border border-amber-200 mb-3">
+                <span className="font-bold text-amber-900">Modern Equivalent: </span>
+                <span>{suggestedUpdate}</span>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleRefresh}
+              disabled={refreshing}
+              className="w-full py-2 px-3 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-600 hover:to-amber-700 active:scale-95 text-white text-xs font-semibold rounded-lg flex items-center justify-center gap-2 shadow-sm transition-all cursor-pointer disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={refreshing ? 'animate-spin' : ''} />
+              <span>{refreshing ? 'Updating to Latest...' : 'Update to Latest (1-Click)'}</span>
+            </button>
+          </div>
+        )}
+
+        {!isDeprecated && temporalAnchor && (
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+            <Clock size={12} className="text-gray-400" />
+            <span>Temporal context: <strong className="text-gray-700">{temporalAnchor}</strong></span>
+          </div>
+        )}
+
         {!selectedNode ? (
           <p className="text-sm text-gray-400">Node not found.</p>
         ) : tab?.isStructured ? (
