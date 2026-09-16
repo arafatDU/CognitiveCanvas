@@ -1,7 +1,8 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from app.api import deps
 from app.db.session import get_db
@@ -287,3 +288,67 @@ def reinforce_memory(
 
     reinforcement_service.reinforce_memory(db, str(valid_id))
     return {"status": "success"}
+
+
+class ExtractSubmemoletRequest(BaseModel):
+    parent_id: Optional[str] = None
+    text: str
+    summary: Optional[str] = None
+    color: Optional[str] = None
+
+
+@router.post("/extract-submemolet", response_model=Memolet)
+def extract_submemolet(
+    req: ExtractSubmemoletRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(deps.get_current_user),
+):
+    """
+    Extracts a sub-memolet from selected text or parent memolet,
+    generates embeddings, saves to PostgreSQL, and indexes concepts in Neo4j.
+    """
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Text cannot be empty")
+
+    import re
+    words = re.findall(r'\b[A-Za-z0-9_-]{3,}\b', req.text)
+    stop_words = {"the", "and", "for", "with", "this", "that", "from", "have", "you", "are"}
+    filtered_words = [w for w in words if w.lower() not in stop_words]
+    keywords = list(dict.fromkeys(filtered_words))[:6] if filtered_words else ["snippet"]
+
+    summary = req.summary or req.text.strip().split("\n")[0][:140]
+
+    try:
+        embedding = retrieval_service.encode_text(req.text)
+    except Exception as e:
+        logger.warning(f"Embedding failed for submemolet: {e}")
+        embedding = None
+
+    db_memolet = MemoletModel(
+        user_id=current_user.id,
+        text=f"Summary: {summary}\nUser: Extracted sub-context\nAI: {req.text}",
+        keywords=keywords,
+        color=req.color or "#bfdbfe",
+        embedding=embedding,
+    )
+    db.add(db_memolet)
+    db.commit()
+    db.refresh(db_memolet)
+
+    try:
+        with neo4j_connector.get_session() as neo4j_session:
+            graphrag_service.add_concepts_to_graph(neo4j_session, db_memolet, user_id=str(current_user.id))
+            if req.parent_id:
+                neo4j_session.run(
+                    """
+                    MATCH (parent:Memolet {id: $parent_id}), (child:Memolet {id: $child_id})
+                    MERGE (child)-[:EXTRACTED_FROM]->(parent)
+                    """,
+                    parent_id=str(req.parent_id),
+                    child_id=str(db_memolet.id),
+                )
+    except Exception as e:
+        logger.warning(f"Neo4j submemolet link failed: {e}")
+
+    return db_memolet
+

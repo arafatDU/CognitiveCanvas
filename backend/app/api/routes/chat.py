@@ -28,6 +28,7 @@ class ChatRequest(BaseModel):
     active_memolet_ids: List[str] = []
     model: Optional[str] = None
     conversation_id: Optional[str] = None
+    spatial_instructions: Optional[str] = None
 
 
 class ChatResponse(BaseModel):
@@ -145,6 +146,15 @@ def generate_chat(
                 f"The following active memory context contains deprecated or outdated syntax:\n{warn_bullets}\n"
                 f"You MUST prioritize modern {time_info['current_date_str']} best practices and explicitly caution the user if the memory advice is outdated."
             )
+        if req.spatial_instructions:
+            system_prompt += (
+                f"\n\n[SPATIAL SENSEMAKING CANVAS INSTRUCTIONS]:\n"
+                f"{req.spatial_instructions}\n"
+                f"Follow these layout priorities and context groupings precisely."
+            )
+        system_prompt += (
+            "\n\nWhen referencing information from memory context, cite the relevant memory display id using [[citation:ID]] format (e.g. [[citation:1_0]])."
+        )
         llm_messages.append({"role": "system", "content": system_prompt})
 
     # Load recent conversation history
@@ -279,6 +289,15 @@ def generate_chat_stream(
                 f"The following active memory context contains deprecated or outdated syntax:\n{warn_bullets}\n"
                 f"You MUST prioritize modern {time_info['current_date_str']} best practices and explicitly caution the user if the memory advice is outdated."
             )
+        if req.spatial_instructions:
+            system_prompt += (
+                f"\n\n[SPATIAL SENSEMAKING CANVAS INSTRUCTIONS]:\n"
+                f"{req.spatial_instructions}\n"
+                f"Follow these layout priorities and context groupings precisely."
+            )
+        system_prompt += (
+            "\n\nWhen referencing information from memory context, cite the relevant memory display id using [[citation:ID]] format (e.g. [[citation:1_0]])."
+        )
         llm_messages.append({"role": "system", "content": system_prompt})
 
     recent_messages = db.query(ChatMessage).filter(ChatMessage.conversation_id == conversation.id).order_by(ChatMessage.created_at.asc()).all()
@@ -379,69 +398,77 @@ def save_chat_to_memory(
     if not valid_pairs:
         raise HTTPException(status_code=400, detail="No non-empty messages to save.")
 
-    # 1. Single-Pass Unified Summarization & Deprecation Audit (1 LLM call)
-    audited_pairs = temporal_auditor_service.audit_and_summarize_pairs(valid_pairs)
+    # 1. Single-Pass Unified Session & Multi-Pair Summarization & Deprecation Audit (1 LLM call)
+    session_audit = temporal_auditor_service.audit_and_summarize_session(valid_pairs)
+    pair_results = session_audit.get("pair_results", [])
+    overarching_summary = session_audit.get("overarching_summary", "")
 
-    processed = []
+    if len(valid_pairs) == 1:
+        p = valid_pairs[0]
+        pr = pair_results[0] if pair_results else {}
+        p_summary = pr.get("summary") or overarching_summary or f"{p['user'][:80]}..."
+        serialized_text = f"Summary: {p_summary}\nUser: {p['user']}\nAI: {p['ai']}"
+    else:
+        # Multi-pair consolidated format with hierarchical overview and delimiters
+        blocks = [f"Overview: {overarching_summary}"]
+        for p, pr in zip(valid_pairs, pair_results):
+            p_sum = pr.get("summary") or f"{p['user'][:60]}..."
+            blocks.append(f"---PAIR---\nSummary: {p_sum}\nUser: {p['user']}\nAI: {p['ai']}")
+        serialized_text = "\n".join(blocks)
+
+    # 2. Embedding for dense vector search
+    try:
+        embedding = retrieval_service.encode_text(serialized_text)
+    except Exception as e:
+        logger.warning(f"Embedding failed: {e}")
+        embedding = None
+
     PASTEL_COLORS = [
         "#fef08a", "#fef9c3", "#bbf7d0", "#d9f99d", 
         "#bfdbfe", "#e0f2fe", "#fbcfe8", "#fce7f3", 
         "#e9d5ff", "#f3e8ff", "#fed7aa", "#ffedd5"
     ]
+    assigned_color = random.choice(PASTEL_COLORS)
+    conversation_id = req.conversation_id if req.conversation_id else None
 
     try:
-        with neo4j_connector.get_session() as neo4j_session:
-            for pair, audit_meta in zip(valid_pairs, audited_pairs):
-                user_msg = pair["user"]
-                ai_msg = pair["ai"]
-                summary = audit_meta.get("summary") or f"{user_msg[:80]}..."
-                serialized_text = f"Summary: {summary}\nUser: {user_msg}\nAI: {ai_msg}"
-                keywords = audit_meta.get("keywords") or []
+        # 3. Exactly ONE consolidated MemoletModel in PostgreSQL
+        db_memolet = MemoletModel(
+            user_id=current_user.id,
+            conversation_id=conversation_id,
+            text=serialized_text,
+            keywords=session_audit.get("aggregated_keywords", []),
+            embedding=embedding,
+            color=assigned_color,
+            is_time_sensitive=session_audit.get("is_time_sensitive", False),
+            deprecation_risk=session_audit.get("deprecation_risk", "none"),
+            temporal_anchor=session_audit.get("temporal_anchor"),
+            validity_horizon_days=session_audit.get("validity_horizon_days", 365),
+            is_deprecated=session_audit.get("is_deprecated", False),
+            deprecation_reason=session_audit.get("deprecation_reason"),
+            suggested_update=session_audit.get("suggested_update"),
+            audited_at=datetime.utcnow() if session_audit.get("is_time_sensitive") else None,
+        )
+        db.add(db_memolet)
+        db.commit()
+        db.refresh(db_memolet)
 
-                # Embedding
-                try:
-                    embedding = retrieval_service.encode_text(serialized_text)
-                except Exception as e:
-                    logger.warning(f"Embedding failed: {e}")
-                    embedding = None
+        # 4. Update GraphRAG (Neo4j)
+        try:
+            with neo4j_connector.get_session() as neo4j_session:
+                graphrag_service.add_concepts_to_graph(neo4j_session, db_memolet, user_id=str(current_user.id))
+        except Exception as e:
+            logger.warning(f"Neo4j update failed for memolet {db_memolet.id}: {e}")
 
-                assigned_color = random.choice(PASTEL_COLORS)
-                conversation_id = req.conversation_id if req.conversation_id else None
-
-                db_memolet = MemoletModel(
-                    user_id=current_user.id,
-                    conversation_id=conversation_id,
-                    text=serialized_text,
-                    keywords=keywords,
-                    embedding=embedding,
-                    color=assigned_color,
-                    is_time_sensitive=audit_meta.get("is_time_sensitive", False),
-                    deprecation_risk=audit_meta.get("deprecation_risk", "none"),
-                    temporal_anchor=audit_meta.get("temporal_anchor"),
-                    validity_horizon_days=audit_meta.get("validity_horizon_days", 365),
-                    is_deprecated=audit_meta.get("is_deprecated", False),
-                    deprecation_reason=audit_meta.get("deprecation_reason"),
-                    suggested_update=audit_meta.get("suggested_update"),
-                    audited_at=datetime.utcnow() if audit_meta.get("is_time_sensitive") else None,
-                )
-                db.add(db_memolet)
-                db.commit()
-                db.refresh(db_memolet)
-
-                # Update GraphRAG (Neo4j)
-                try:
-                    graphrag_service.add_concepts_to_graph(neo4j_session, db_memolet, user_id=str(current_user.id))
-                except Exception as e:
-                    logger.warning(f"Neo4j update failed for memolet {db_memolet.id}: {e}")
-
-                processed.append({
-                    "id": str(db_memolet.id),
-                    "summary": summary,
-                    "is_time_sensitive": db_memolet.is_time_sensitive,
-                    "is_deprecated": db_memolet.is_deprecated,
-                    "deprecation_risk": db_memolet.deprecation_risk,
-                    "temporal_anchor": db_memolet.temporal_anchor,
-                })
+        processed = [{
+            "id": str(db_memolet.id),
+            "summary": overarching_summary,
+            "is_time_sensitive": db_memolet.is_time_sensitive,
+            "is_deprecated": db_memolet.is_deprecated,
+            "deprecation_risk": db_memolet.deprecation_risk,
+            "temporal_anchor": db_memolet.temporal_anchor,
+            "pair_count": len(valid_pairs),
+        }]
 
     except Exception as e:
         db.rollback()
@@ -449,6 +476,7 @@ def save_chat_to_memory(
         raise HTTPException(status_code=500, detail=f"Memory save failed: {str(e)}")
 
     return {
-        "message": f"Successfully saved {len(processed)} memory pair(s).",
+        "message": f"Successfully saved {len(valid_pairs)} interaction(s) as a consolidated memory object.",
         "saved": processed,
     }
+
