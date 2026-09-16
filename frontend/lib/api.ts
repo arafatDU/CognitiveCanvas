@@ -179,26 +179,125 @@ export function assignDisplayIds<T extends MemoletDTO>(memolets: T[]): T[] {
   }));
 }
 
+export interface ParsedPair {
+  index: number;
+  label: string;
+  summary: string;
+  user: string;
+  ai: string;
+  raw: string;
+  isStructured?: boolean;
+}
+
+/**
+ * Splits a memolet's serialized text into multiple pairs if separated by ---PAIR---
+ * For single-pair memolets, returns a 1-item array.
+ */
+export function splitIntoPairs(text: string): ParsedPair[] {
+  if (!text) return [];
+
+  if (text.includes('---PAIR---')) {
+    const parts = text.split(/---PAIR---/);
+    const pairs: ParsedPair[] = [];
+    const pairBlocks = parts.slice(1);
+
+    pairBlocks.forEach((block, idx) => {
+      const trimmed = block.trim();
+      if (!trimmed) return;
+      const summaryMatch = trimmed.match(/(?:Summary|Overview):\s*([\s\S]*?)(?=\n(?:User|AI):|$)/i);
+      const userMatch = trimmed.match(/User:\s*([\s\S]*?)(?=\nAI:|$)/i);
+      const aiMatch = trimmed.match(/AI:\s*([\s\S]*)/i);
+
+      const s = summaryMatch ? summaryMatch[1].trim() : '';
+      const u = userMatch ? userMatch[1].trim() : '';
+      const a = aiMatch ? aiMatch[1].trim() : '';
+
+      pairs.push({
+        index: idx,
+        label: `Pair ${idx + 1}`,
+        summary: s || (u ? `${u.slice(0, 60)}...` : `Pair ${idx + 1}`),
+        user: u,
+        ai: a,
+        raw: `Summary: ${s}\nUser: ${u}\nAI: ${a}`,
+        isStructured: Boolean(u || a),
+      });
+    });
+
+    return pairs;
+  }
+
+  // Single-pair structured check
+  const summaryMatch = text.match(/(?:Summary|Overview):\s*([\s\S]*?)(?=\nUser:|$)/i);
+  const userMatch = text.match(/User:\s*([\s\S]*?)(?=\nAI:|$)/i);
+  const aiMatch = text.match(/AI:\s*([\s\S]*)/i);
+
+  if (userMatch && aiMatch) {
+    const s = summaryMatch ? summaryMatch[1].trim() : '';
+    const u = userMatch[1].trim();
+    const a = aiMatch[1].trim();
+    return [{
+      index: 0,
+      label: 'Pair 1',
+      summary: s || `${u.slice(0, 60)}...`,
+      user: u,
+      ai: a,
+      raw: text,
+      isStructured: true,
+    }];
+  }
+
+  return [];
+}
+
 /** Parse the structured text format into component parts */
 export function parseMemoletText(text: string): {
   summary: string;
   user: string;
   ai: string;
   isStructured: boolean;
+  pairs: ParsedPair[];
 } {
-  const summaryMatch = text.match(/Summary:\s*([\s\S]*?)(?=\nUser:|$)/i);
+  if (!text) {
+    return { summary: '', user: '', ai: '', isStructured: false, pairs: [] };
+  }
+
+  if (text.includes('---PAIR---')) {
+    const overviewMatch = text.match(/(?:Overview|Summary):\s*([\s\S]*?)(?=\n---PAIR---|$)/i);
+    const pairs = splitIntoPairs(text);
+    const firstPair = pairs[0];
+    return {
+      summary: overviewMatch ? overviewMatch[1].trim() : (firstPair?.summary || ''),
+      user: firstPair?.user || '',
+      ai: firstPair?.ai || '',
+      isStructured: true,
+      pairs,
+    };
+  }
+
+  const summaryMatch = text.match(/(?:Summary|Overview):\s*([\s\S]*?)(?=\nUser:|$)/i);
   const userMatch = text.match(/User:\s*([\s\S]*?)(?=\nAI:|$)/i);
   const aiMatch = text.match(/AI:\s*([\s\S]*)/i);
 
   if (userMatch && aiMatch) {
+    const s = summaryMatch ? summaryMatch[1].trim() : '';
+    const u = userMatch[1].trim();
+    const a = aiMatch[1].trim();
     return {
-      summary: summaryMatch ? summaryMatch[1].trim() : '',
-      user: userMatch[1].trim(),
-      ai: aiMatch[1].trim(),
+      summary: s,
+      user: u,
+      ai: a,
       isStructured: true,
+      pairs: [{
+        index: 0,
+        label: 'Pair 1',
+        summary: s || `${u.slice(0, 60)}...`,
+        user: u,
+        ai: a,
+        raw: text,
+      }],
     };
   }
-  return { summary: '', user: '', ai: text, isStructured: false };
+  return { summary: '', user: '', ai: text, isStructured: false, pairs: [] };
 }
 
 export const memoriesApi = {
@@ -218,6 +317,12 @@ export const memoriesApi = {
       '/memories/seed-demo',
       { method: 'POST' }
     ),
+  /** Extract a fine-grained submemolet into PostgreSQL and Neo4j */
+  extractSubmemolet: (payload: { parent_id?: string; text: string; summary?: string; color?: string }) =>
+    apiFetch<MemoletDTO>('/memories/extract-submemolet', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
 };
 
 // ── Chat endpoint ───────────────────────────────────────────────────────────
@@ -245,6 +350,7 @@ export interface ChatRequest {
   active_memolet_ids: string[];
   model?: string;
   conversation_id?: string;
+  spatial_instructions?: string;
 }
 
 export interface DeprecationWarning {

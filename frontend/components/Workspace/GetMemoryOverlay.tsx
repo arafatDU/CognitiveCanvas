@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { memoriesApi, parseMemoletText, type MemoletDTO, getNextDisplayId } from '@/lib/api';
+import { memoriesApi, parseMemoletText, splitIntoPairs, type MemoletDTO, getNextDisplayId } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { X, Search, CheckCircle, Database, ChevronRight, FileText, AlertTriangle, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -22,13 +22,18 @@ function MemoryDocViewer({
   deleting?: boolean;
 }) {
   const parsed = parseMemoletText(memolet.text);
-
-  // A memolet can (in future) have multiple pairs separated by ---PAIR---
-  // For now we show a single pair as tab 1
-  const tabs = [{ label: 'Pair 1', ...parsed }];
+  const pairs = splitIntoPairs(memolet.text);
+  const tabs = pairs.length > 0 ? pairs : [{ label: 'Pair 1', ...parsed, raw: memolet.text, isStructured: parsed.isStructured }];
+  const isMultiPair = pairs.length > 1;
 
   const [activeTab, setActiveTab] = useState(0);
-  const tab = tabs[activeTab];
+
+  // Reset tab when viewing a different memory
+  useEffect(() => {
+    setActiveTab(0);
+  }, [memolet.id]);
+
+  const tab = tabs[activeTab] ?? tabs[0];
 
   return (
     <div className="w-[360px] flex-shrink-0 flex flex-col h-full bg-white border-l border-gray-200 shadow-sm overflow-hidden animate-in slide-in-from-right duration-200">
@@ -47,20 +52,38 @@ function MemoryDocViewer({
         </button>
       </div>
 
-      {/* Tabs (one per pair; future: multiple) */}
-      <div className="flex bg-[#f3f4f6] border-b border-gray-200 text-xs font-medium px-2 overflow-x-auto">
+      {/* Episode Overview for Multi-Pair Memolets */}
+      {isMultiPair && parsed.summary && (
+        <div className="bg-indigo-50/70 border-b border-indigo-100 px-4 py-2.5 text-xs flex-shrink-0">
+          <div className="flex items-center gap-1.5 font-bold text-indigo-900 mb-0.5">
+            <span>📚</span>
+            <span>Session Episode Overview:</span>
+          </div>
+          <p className="text-indigo-900 text-[11px] leading-relaxed line-clamp-3">
+            {parsed.summary}
+          </p>
+        </div>
+      )}
+
+      {/* Tabs (one per pair) */}
+      <div className="flex bg-[#f3f4f6] border-b border-gray-200 text-xs font-medium px-2 overflow-x-auto flex-shrink-0">
         {tabs.map((t, i) => (
           <button
             key={i}
             onClick={() => setActiveTab(i)}
             className={cn(
-              'py-2.5 px-4 whitespace-nowrap transition',
+              'py-2.5 px-4 whitespace-nowrap transition cursor-pointer',
               activeTab === i
                 ? 'text-blue-600 border-b-2 border-blue-600 bg-white'
                 : 'text-gray-500 hover:text-gray-700'
             )}
           >
             {t.label}
+            {tabs.length > 1 && (
+              <span className="ml-1 text-[9px] text-gray-400">
+                {i + 1}/{tabs.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -93,29 +116,33 @@ function MemoryDocViewer({
                 <p className="text-sm text-blue-900 leading-relaxed">{tab.summary}</p>
               </div>
             )}
-            <div>
-              <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-wider">
-                User
-              </h4>
-              <div className="bg-gray-100/80 p-4 rounded-xl text-sm text-gray-800 whitespace-pre-wrap">
-                {tab.user}
+            {tab.user && (
+              <div>
+                <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-wider">
+                  User
+                </h4>
+                <div className="bg-gray-100/80 p-4 rounded-xl text-sm text-gray-800 whitespace-pre-wrap">
+                  {tab.user}
+                </div>
               </div>
-            </div>
-            <div>
-              <h4 className="text-[10px] font-bold text-blue-500 mb-2 uppercase tracking-wider flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-blue-500" />
-                AI Response
-              </h4>
-              <div className="border border-gray-100 bg-white p-4 rounded-xl shadow-sm text-sm text-gray-800 whitespace-normal leading-relaxed prose prose-sm prose-blue max-w-none">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                  {tab.ai}
-                </ReactMarkdown>
+            )}
+            {tab.ai && (
+              <div>
+                <h4 className="text-[10px] font-bold text-blue-500 mb-2 uppercase tracking-wider flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-blue-500" />
+                  AI Response
+                </h4>
+                <div className="border border-gray-100 bg-white p-4 rounded-xl shadow-sm text-sm text-gray-800 whitespace-normal leading-relaxed prose prose-sm prose-blue max-w-none">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {tab.ai}
+                  </ReactMarkdown>
+                </div>
               </div>
-            </div>
+            )}
           </>
         ) : (
           <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
-            {memolet.text}
+            {tab.raw || memolet.text}
           </div>
         )}
       </div>
@@ -384,6 +411,11 @@ export default function GetMemoryOverlay() {
                               {nodes.find((n) => n.id === m.id)?.data.displayId ?? m.displayId ?? `#${m.id.substring(0, 6)}`}
                             </span>
                             <div className="flex items-center gap-1">
+                              {m.text?.includes('---PAIR---') && (
+                                <span className="text-[9px] font-bold text-blue-700 bg-blue-100 border border-blue-200 px-1 rounded">
+                                  {splitIntoPairs(m.text).length} Pairs
+                                </span>
+                              )}
                               {m.is_deprecated && (
                                 <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1 rounded" title={m.deprecation_reason || "Outdated advice"}>
                                   ⚠️
@@ -450,6 +482,11 @@ export default function GetMemoryOverlay() {
                             <span className="inline-flex bg-blue-600 text-white font-mono text-[10px] font-bold px-2 py-0.5 rounded shadow-sm tracking-wide">
                               {badgeText}
                             </span>
+                            {m.text?.includes('---PAIR---') && (
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-800 bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded">
+                                📚 {splitIntoPairs(m.text).length} Pairs
+                              </span>
+                            )}
                             {m.is_deprecated && (
                               <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-full" title={m.deprecation_reason || "Outdated advice"}>
                                 <AlertTriangle size={10} />

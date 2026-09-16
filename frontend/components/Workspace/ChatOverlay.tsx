@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils';
 import { chatApi, ConversationListResponse, ChatMessageDTO, memoriesApi, MemoletDTO, parseMemoletText, DeprecationWarning, auditorApi, getNextDisplayId } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { CitationBadge } from './CitationBadge';
+import { compileSpatialContext } from '@/lib/spatialCompiler';
 
 type Message = {
   id?: string;
@@ -254,9 +256,9 @@ export default function ChatOverlay() {
 
   const filteredMemolets = nodes.filter(
     (m) => {
-      const displayStr = m.data.displayId || m.id;
+      const displayStr = m.data?.displayId || m.id;
       return displayStr.toLowerCase().includes(mentionQuery) ||
-             m.data.keywords.some((k) => k.toLowerCase().includes(mentionQuery));
+             m.data?.keywords?.some((k: string) => k.toLowerCase().includes(mentionQuery));
     }
   );
 
@@ -268,12 +270,46 @@ export default function ChatOverlay() {
     setSuggestions([]);
     setDismissed(false);
 
+    const edges = useMemoletStore.getState().edges;
+    const spatialContext = compileSpatialContext(nodes, edges);
     const mentionedStrs = [...text.matchAll(/@([\w-]+)/g)].map((match) => match[1]);
     const mentionedIds = mentionedStrs.map(str => {
-      const node = nodes.find(n => n.data.displayId === str || n.id === str);
+      const node = nodes.find(n => n.data?.displayId === str || n.id === str);
       return node ? node.id : str;
     });
-    
+
+    // Bundle connected synthesis partners into active context
+    const bundledActiveIdSet = new Set<string>();
+    const bundledDisplayPairs: string[] = [];
+
+    if (mentionedIds.length > 0) {
+      for (const mId of mentionedIds) {
+        bundledActiveIdSet.add(mId);
+        const connectedIds = useMemoletStore.getState().getConnectedNodeIds(mId);
+        for (const connId of connectedIds) {
+          const connNode = nodes.find((n) => n.id === connId);
+          if (connNode && connNode.type === 'memolet') {
+            bundledActiveIdSet.add(connId);
+            const mNode = nodes.find((n) => n.id === mId);
+            const mDisp = mNode?.data?.displayId || mId.slice(0, 4);
+            const connDisp = connNode.data?.displayId || connId.slice(0, 4);
+            bundledDisplayPairs.push(`[[citation:${mDisp}]] + [[citation:${connDisp}]]`);
+          }
+        }
+      }
+    }
+
+    const effectiveActiveIds =
+      bundledActiveIdSet.size > 0 ? Array.from(bundledActiveIdSet) : spatialContext.activeMemoletIds;
+
+    let spatialInstructions = spatialContext.instructionText || '';
+    if (bundledDisplayPairs.length > 0) {
+      const bundleInst = `GROUP_CONTEXT: The user cited connected memories. Synthesize context from ${bundledDisplayPairs.join(', ')} cohesively into unified insights, citing all relevant memory sources.`;
+      spatialInstructions = spatialInstructions
+        ? `${spatialInstructions}\n${bundleInst}`
+        : bundleInst;
+    }
+
     const userMsgId = `usr-${Date.now()}`;
     const aiMsgId = `ai-${Date.now()}`;
 
@@ -287,9 +323,10 @@ export default function ChatOverlay() {
     chatApi.sendStream(
       {
         message: text,
-        active_memolet_ids: mentionedIds,
+        active_memolet_ids: effectiveActiveIds,
         model: selectedModel || undefined,
-        conversation_id: currentConversationId || undefined
+        conversation_id: currentConversationId || undefined,
+        spatial_instructions: spatialInstructions || undefined,
       },
       (token) => {
         setMessages((prev) =>
@@ -341,6 +378,35 @@ export default function ChatOverlay() {
     .filter((m) => m.role === 'ai' && m.id)
     .map((m) => m.id as string);
 
+  const activeConnectedPairs = useMemo(() => {
+    const mentionedTags = [...inputValue.matchAll(/@([\w-]+)/g)].map((m) => m[1]);
+    if (mentionedTags.length === 0) return [];
+
+    const pairs: { sourceDisplay: string; targetDisplay: string }[] = [];
+    for (const tag of mentionedTags) {
+      const node = nodes.find((n) => n.data?.displayId === tag || n.id === tag);
+      if (node) {
+        const connIds = useMemoletStore.getState().getConnectedNodeIds(node.id);
+        for (const connId of connIds) {
+          const targetNode = nodes.find((n) => n.id === connId);
+          if (targetNode && targetNode.type === 'memolet') {
+            const sDisp = node.data?.displayId || node.id.slice(0, 4);
+            const tDisp = targetNode.data?.displayId || targetNode.id.slice(0, 4);
+            const exists = pairs.some(
+              (p) =>
+                (p.sourceDisplay === sDisp && p.targetDisplay === tDisp) ||
+                (p.sourceDisplay === tDisp && p.targetDisplay === sDisp)
+            );
+            if (!exists) {
+              pairs.push({ sourceDisplay: sDisp, targetDisplay: tDisp });
+            }
+          }
+        }
+      }
+    }
+    return pairs;
+  }, [inputValue, nodes]);
+
   const allSelected =
     aiMessageIds.length > 0 &&
     aiMessageIds.every((id) => selectedMessagesForMemory.has(id));
@@ -369,7 +435,11 @@ export default function ChatOverlay() {
     setSaveStatus('idle');
 
     const pairsToSave: { user: string; ai: string }[] = [];
-    selectedMessagesForMemory.forEach((aiId) => {
+    const orderedAiIds = messages
+      .filter((m) => m.role === 'ai' && m.id && selectedMessagesForMemory.has(m.id))
+      .map((m) => m.id as string);
+
+    for (const aiId of orderedAiIds) {
       const aiIndex = messages.findIndex((m) => m.id === aiId);
       if (aiIndex > 0) {
         for (let i = aiIndex - 1; i >= 0; i--) {
@@ -382,7 +452,7 @@ export default function ChatOverlay() {
           }
         }
       }
-    });
+    }
 
     try {
       await chatApi.saveMemory({ messages: pairsToSave, conversation_id: currentConversationId || undefined });
@@ -670,8 +740,25 @@ export default function ChatOverlay() {
                         </div>
                       </div>
                     )}
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {msg.content}
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        a: ({ href, children }) => {
+                          if (href?.startsWith('#citation-')) {
+                            const id = href.replace('#citation-', '');
+                            return <CitationBadge displayId={id} />;
+                          }
+                          return (
+                            <a href={href} target="_blank" rel="noopener noreferrer">
+                              {children}
+                            </a>
+                          );
+                        },
+                      }}
+                    >
+                      {msg.content
+                        .replace(/\[\[citation:\s*([\w.-]+)\]\]/gi, '[$1](#citation-$1)')
+                        .replace(/\[citation:\s*([\w.-]+)\]/gi, '[$1](#citation-$1)')}
                     </ReactMarkdown>
                   </>
                 ) : (
@@ -679,19 +766,13 @@ export default function ChatOverlay() {
                 )}
 
                 {msg.citations && msg.citations.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2">
+                  <div className="flex flex-wrap gap-1 mt-2.5 items-center">
+                    <span className="text-[10px] text-gray-400 font-semibold mr-0.5">Citations:</span>
                     {msg.citations.map((citeId, j) => {
                       const citedNode = nodes.find(n => n.id === citeId);
-                      const display = citedNode?.data.displayId ?? citeId.substring(0, 6);
+                      const display = citedNode?.data?.displayId ?? citeId.substring(0, 6);
                       return (
-                        <span
-                          key={j}
-                          onMouseEnter={() => highlightNode(citeId)}
-                          onMouseLeave={() => highlightNode(null)}
-                          className="inline-flex items-center text-[10px] font-mono font-bold bg-blue-50 border border-blue-200 text-blue-700 px-1.5 py-0.5 rounded-md cursor-pointer hover:bg-blue-100 transition shadow-sm"
-                        >
-                          [{display}]
-                        </span>
+                        <CitationBadge key={j} displayId={display} />
                       );
                     })}
                   </div>
@@ -883,6 +964,28 @@ export default function ChatOverlay() {
                   );
                 })
               )}
+            </div>
+          )}
+
+          {activeConnectedPairs.length > 0 && (
+            <div className="flex items-center gap-1.5 mb-2 px-2.5 py-1.5 bg-blue-50/90 border border-blue-200 rounded-lg text-xs text-blue-900 shadow-2xs">
+              <span className="font-bold flex items-center gap-1">
+                <span>🔗</span>
+                <span>Canvas Synthesis:</span>
+              </span>
+              <div className="flex items-center gap-1 flex-wrap">
+                {activeConnectedPairs.map((p, i) => (
+                  <span
+                    key={i}
+                    className="font-mono font-semibold bg-white border border-blue-300 px-1.5 py-0.5 rounded shadow-2xs text-[11px] text-blue-700"
+                  >
+                    @{p.sourceDisplay} ⟷ @{p.targetDisplay}
+                  </span>
+                ))}
+              </div>
+              <span className="text-[10px] text-blue-600 ml-auto font-sans hidden sm:inline">
+                Bundled automatically for unified synthesis
+              </span>
             </div>
           )}
 

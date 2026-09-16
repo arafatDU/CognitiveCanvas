@@ -307,6 +307,182 @@ For each interaction, provide:
                 })
             return final_output
 
+    def audit_and_summarize_session(
+        self,
+        pairs: List[Dict[str, str]],
+    ) -> Dict[str, Any]:
+        """
+        Processes 1 or N conversation pairs for consolidated memory saving:
+        Produces an overarching synthesis summary + pair-level micro-summaries and temporal metadata
+        in ONE unified LLM call.
+        """
+        if not pairs:
+            return {
+                "overarching_summary": "",
+                "pair_results": [],
+                "aggregated_keywords": [],
+                "is_time_sensitive": False,
+                "deprecation_risk": "none",
+                "temporal_anchor": None,
+                "validity_horizon_days": 365,
+                "is_deprecated": False,
+                "deprecation_reason": None,
+                "suggested_update": None,
+            }
+
+        time_info = self.get_current_time_grounding()
+        current_date_str = time_info["current_date_str"]
+
+        # Run heuristic scan across all pairs
+        heuristic_results = []
+        for pair in pairs:
+            combined_text = f"{pair.get('user', '')}\n{pair.get('ai', '')}"
+            h_scan = self.scan_temporal_heuristics(combined_text)
+            heuristic_results.append(h_scan)
+
+        prompt_pairs = []
+        for i, pair in enumerate(pairs):
+            prompt_pairs.append(
+                f"### Interaction {i}:\nUser: {pair.get('user', '')}\nAI: {pair.get('ai', '')}"
+            )
+
+        if len(pairs) == 1:
+            instruction = (
+                "Provide an 'overarching_summary' (1-2 sentences summarizing the interaction) and a 'results' array with 1 item."
+            )
+        else:
+            instruction = (
+                f"The user has selected {len(pairs)} sequential interactions from a conversation to save as ONE consolidated memory.\n"
+                "Provide:\n"
+                "1. 'overarching_summary': 2-3 concise sentences synthesizing the global topic, progression, and outcome across all interactions.\n"
+                f"2. 'results': An array of analysis objects for each interaction (index 0 to {len(pairs) - 1})."
+            )
+
+        combined_prompt = f"""
+You are a precise technical memory assistant for CognitiveCanvas.
+Today's date is: {current_date_str}.
+
+{instruction}
+
+For each interaction in 'results', provide:
+1. "index": integer matching the interaction index.
+2. "summary": 1-2 concise sentences summarizing this specific question and answer.
+3. "keywords": 3 to 6 relevant concept keywords.
+4. "is_time_sensitive": boolean (true if the information depends on software library versions, temporary APIs, current pricing/quotas, or ephemeral dates).
+5. "temporal_anchor": concise string identifying the temporal context (e.g., "Next.js 13 Pages Router", "Python 3.10 typing", "As of {current_date_str}") or null if invariant.
+6. "deprecation_risk": "high" | "medium" | "low" | "none".
+7. "validity_horizon_days": estimated days before this advice may become stale (e.g. 90, 180, 365, or null).
+8. "is_deprecated": boolean. Relative to today ({current_date_str}), has this specific solution or syntax already been deprecated or replaced?
+9. "deprecation_reason": short explanation if is_deprecated is true, else null.
+10. "suggested_update": short 1-sentence modern replacement if is_deprecated is true, else null.
+
+Interactions:
+{chr(10).join(prompt_pairs)}
+"""
+
+        try:
+            raw_json = self._call_auditor_llm(combined_prompt)
+            parsed = json.loads(raw_json)
+            overarching_summary = parsed.get("overarching_summary", "")
+            results_list = parsed.get("results", []) if isinstance(parsed, dict) else (parsed if isinstance(parsed, list) else [])
+
+            results_by_idx = {r.get("index", i): r for i, r in enumerate(results_list)}
+
+            pair_results = []
+            all_keywords = []
+            for i, pair in enumerate(pairs):
+                llm_res = results_by_idx.get(i, {})
+                h_res = heuristic_results[i]
+
+                is_sensitive = llm_res.get("is_time_sensitive", h_res["is_time_sensitive"])
+                deprecation_risk = llm_res.get("deprecation_risk", h_res["risk"])
+                kws = llm_res.get("keywords") or []
+                all_keywords.extend(kws)
+
+                pair_results.append({
+                    "index": i,
+                    "summary": llm_res.get("summary") or f"{pair.get('user', '')[:80]}...",
+                    "keywords": kws,
+                    "is_time_sensitive": bool(is_sensitive),
+                    "temporal_anchor": llm_res.get("temporal_anchor") or (", ".join(h_res.get("matched_tech", [])) if is_sensitive else None),
+                    "deprecation_risk": deprecation_risk,
+                    "validity_horizon_days": llm_res.get("validity_horizon_days") or (180 if is_sensitive else 365),
+                    "is_deprecated": bool(llm_res.get("is_deprecated", False)),
+                    "deprecation_reason": llm_res.get("deprecation_reason"),
+                    "suggested_update": llm_res.get("suggested_update"),
+                })
+
+            if not overarching_summary:
+                if len(pair_results) == 1:
+                    overarching_summary = pair_results[0]["summary"]
+                else:
+                    overarching_summary = f"Session covering {pair_results[0]['summary']}"
+
+        except Exception as e:
+            logger.error(f"Unified session audit & summary LLM call failed: {e}. Falling back to heuristic extraction.")
+            from app.services.chat_importer_service import chat_importer_service
+            pair_results = []
+            all_keywords = []
+            for i, pair in enumerate(pairs):
+                u = pair.get("user", "")
+                a = pair.get("ai", "")
+                summary = chat_importer_service.generate_deterministic_summary(u, a)
+                keywords = chat_importer_service.extract_keywords(f"{summary} {u}")
+                all_keywords.extend(keywords)
+                h_res = heuristic_results[i]
+                pair_results.append({
+                    "index": i,
+                    "summary": summary,
+                    "keywords": keywords,
+                    "is_time_sensitive": h_res["is_time_sensitive"],
+                    "temporal_anchor": ", ".join(h_res.get("matched_tech", [])) if h_res["is_time_sensitive"] else None,
+                    "deprecation_risk": h_res["risk"],
+                    "validity_horizon_days": 180 if h_res["is_time_sensitive"] else 365,
+                    "is_deprecated": False,
+                    "deprecation_reason": None,
+                    "suggested_update": None,
+                })
+            overarching_summary = pair_results[0]["summary"] if len(pair_results) == 1 else f"Session covering {pair_results[0]['summary']}"
+
+        # Deduplicate keywords preserving order
+        seen_kw = set()
+        aggregated_keywords = []
+        for kw in all_keywords:
+            kw_clean = str(kw).strip()
+            if kw_clean and kw_clean.lower() not in seen_kw:
+                seen_kw.add(kw_clean.lower())
+                aggregated_keywords.append(kw_clean)
+
+        # Aggregate temporal statuses
+        has_time_sensitive = any(p["is_time_sensitive"] for p in pair_results)
+        has_deprecated = any(p["is_deprecated"] for p in pair_results)
+
+        # Compute max risk
+        risk_levels = {"high": 3, "medium": 2, "low": 1, "none": 0}
+        max_risk_val = max((risk_levels.get(p.get("deprecation_risk", "none"), 0) for p in pair_results), default=0)
+        risk_map_rev = {3: "high", 2: "medium", 1: "low", 0: "none"}
+        aggregated_risk = risk_map_rev.get(max_risk_val, "none")
+
+        # Pick first non-empty anchors, reasons, and suggested updates
+        first_anchor = next((p["temporal_anchor"] for p in pair_results if p.get("temporal_anchor")), None)
+        first_reason = next((p["deprecation_reason"] for p in pair_results if p.get("deprecation_reason")), None)
+        first_update = next((p["suggested_update"] for p in pair_results if p.get("suggested_update")), None)
+
+        validity_days = min([p.get("validity_horizon_days") for p in pair_results if p.get("validity_horizon_days")], default=365)
+
+        return {
+            "overarching_summary": overarching_summary,
+            "pair_results": pair_results,
+            "aggregated_keywords": aggregated_keywords[:10],
+            "is_time_sensitive": has_time_sensitive,
+            "deprecation_risk": aggregated_risk,
+            "temporal_anchor": first_anchor,
+            "validity_horizon_days": validity_days,
+            "is_deprecated": has_deprecated,
+            "deprecation_reason": first_reason,
+            "suggested_update": first_update,
+        }
+
     def verify_memolet_staleness(self, memolet: Any, db: Session) -> Dict[str, Any]:
         """
         LLM-as-a-Judge Temporal Staleness Verifier:

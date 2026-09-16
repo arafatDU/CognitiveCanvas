@@ -65,7 +65,7 @@ export default function RightSidebar() {
   const filteredMemolets = nodes.filter(
     (m) =>
       m.id.toLowerCase().includes(mentionQuery) ||
-      m.data.keywords.some((k) => k.toLowerCase().includes(mentionQuery))
+      m.data?.keywords?.some((k: string) => k.toLowerCase().includes(mentionQuery))
   );
 
   const handleSend = useCallback(async () => {
