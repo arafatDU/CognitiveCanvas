@@ -1,4 +1,4 @@
-# Memolet
+# CognitiveCanvas
 
 A sophisticated memory management and conversational AI platform that intelligently captures, organizes, and retrieves information through interactive conversations. Memolet combines advanced LLM capabilities with structured memory management to provide users with a powerful knowledge base that grows smarter with every interaction.
 
