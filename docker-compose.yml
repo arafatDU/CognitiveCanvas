@@ -1,0 +1,143 @@
+services:
+  # ==============================================================================
+  # 1. FastAPI Application Server
+  # ==============================================================================
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cognitivecanvas-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - path: ./backend/.env
+        required: false
+      - path: ./.env
+        required: false
+    environment:
+      - PYTHONUNBUFFERED=1
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost,http://localhost:3000,http://127.0.0.1:3000}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cognitivecanvas-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==============================================================================
+  # 2. Celery Background Worker (Chat Ingestion & Graph Indexing)
+  # ==============================================================================
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cognitivecanvas-worker
+    restart: unless-stopped
+    command: ["uv", "run", "celery", "-A", "app.worker.celery_app.celery_app", "worker", "--loglevel=info"]
+    env_file:
+      - path: ./backend/.env
+        required: false
+      - path: ./.env
+        required: false
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - cognitivecanvas-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==============================================================================
+  # 3. Next.js Frontend Application
+  # ==============================================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        - NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+    container_name: cognitivecanvas-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - path: ./frontend/.env.local
+        required: false
+      - path: ./.env
+        required: false
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - cognitivecanvas-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ==============================================================================
+  # Optional: Local Self-Hosted Infrastructure (activated with --profile local-infra)
+  # ==============================================================================
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: cognitivecanvas-postgres
+    restart: unless-stopped
+    profiles:
+      - local-infra
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-memolet}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgrespassword}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-memolet}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognitivecanvas-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: cognitivecanvas-redis
+    restart: unless-stopped
+    profiles:
+      - local-infra
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cognitivecanvas-network
+
+networks:
+  cognitivecanvas-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
