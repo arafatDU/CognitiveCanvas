@@ -19,6 +19,21 @@ type Message = {
   deprecationWarnings?: DeprecationWarning[];
 };
 
+const SUGGESTION_STOPWORDS = new Set([
+  'a', 'about', 'above', 'after', 'again', 'against', 'all', 'am', 'an', 'and', 'any', 'are',
+  'as', 'at', 'be', 'because', 'been', 'before', 'being', 'below', 'between', 'both',
+  'but', 'by', 'can', 'cant', 'cannot', 'could', 'did', 'do', 'does', 'doing', 'dont',
+  'down', 'during', 'each', 'few', 'for', 'from', 'further', 'had', 'has', 'have',
+  'having', 'he', 'her', 'here', 'hers', 'herself', 'him', 'himself', 'his', 'how',
+  'i', 'if', 'in', 'into', 'is', 'it', 'its', 'itself', 'me', 'more', 'most', 'my',
+  'myself', 'no', 'nor', 'not', 'of', 'off', 'on', 'once', 'only', 'or', 'other',
+  'our', 'ours', 'out', 'over', 'own', 'same', 'she', 'should', 'so', 'some', 'such',
+  'than', 'that', 'the', 'their', 'theirs', 'them', 'themselves', 'then', 'there',
+  'these', 'they', 'this', 'those', 'through', 'to', 'too', 'under', 'until', 'up',
+  'very', 'was', 'we', 'were', 'what', 'when', 'where', 'which', 'while', 'who',
+  'whom', 'why', 'with', 'would', 'you', 'your', 'yours', 'tell', 'give', 'show', 'explain', 'please'
+]);
+
 export default function ChatOverlay() {
   const { rightSidebarOpen, setRightSidebarOpen, highlightNode, nodes, setNodes, setMemoriesNeedsSync, updateMemoletData } = useMemoletStore();
 
@@ -146,12 +161,24 @@ export default function ChatOverlay() {
 
   // Debounced real-time context suggestion from GraphRAG
   const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const suggestionAbortRef = useRef<AbortController | null>(null);
+  const lastDismissedQueryRef = useRef<string>('');
 
   useEffect(() => {
     if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
 
     // Extract query text without @mention tags
     const cleanText = inputValue.replace(/@[\w-]+/g, '').trim();
+
+    // Reset dismissed state if user typed a different question/topic
+    if (dismissed && cleanText !== lastDismissedQueryRef.current) {
+      if (
+        Math.abs(cleanText.length - lastDismissedQueryRef.current.length) > 3 ||
+        !cleanText.startsWith(lastDismissedQueryRef.current.slice(0, 5))
+      ) {
+        setDismissed(false);
+      }
+    }
 
     if (cleanText.length < 3 || showMention || dismissed) {
       if (cleanText.length < 3) {
@@ -161,18 +188,40 @@ export default function ChatOverlay() {
       return;
     }
 
+    // Substantive text check: ensure user typed actual technical/topic words, not just stopwords
+    const tokens = cleanText
+      .toLowerCase()
+      .split(/[\s,.;:?!]+/)
+      .filter((w) => w.length >= 2 && !SUGGESTION_STOPWORDS.has(w));
+
+    if (tokens.length === 0) {
+      setSuggestions([]);
+      return;
+    }
+
+    // Wait for a deliberate typing pause (600ms)
     debounceTimerRef.current = setTimeout(async () => {
+      if (suggestionAbortRef.current) {
+        suggestionAbortRef.current.abort();
+      }
+      const controller = new AbortController();
+      suggestionAbortRef.current = controller;
+
       setSuggestionsLoading(true);
       try {
-        const results = await memoriesApi.search(cleanText);
+        const results = await memoriesApi.search(cleanText, controller.signal);
         setSuggestions(results.slice(0, 3));
-      } catch (err) {
-        console.warn('Real-time suggestion error:', err);
-        setSuggestions([]);
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.warn('Real-time suggestion error:', err);
+          setSuggestions([]);
+        }
       } finally {
-        setSuggestionsLoading(false);
+        if (!controller.signal.aborted) {
+          setSuggestionsLoading(false);
+        }
       }
-    }, 350);
+    }, 600);
 
     return () => {
       if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current);
@@ -827,7 +876,11 @@ export default function ChatOverlay() {
                   </span>
                 </div>
                 <button
-                  onClick={() => setDismissed(true)}
+                  onClick={() => {
+                    const cleanText = inputValue.replace(/@[\w-]+/g, '').trim();
+                    lastDismissedQueryRef.current = cleanText;
+                    setDismissed(true);
+                  }}
                   className="text-gray-400 hover:text-gray-600 p-0.5 rounded-md hover:bg-gray-100 transition"
                   title="Dismiss suggestions"
                 >

@@ -45,12 +45,16 @@ class GraphRAGService:
     def retrieve_context_subgraph(self, neo4j_session, query_keywords: list[str], user_id: str = None):
         """
         Retrieves local neighborhood around the matched keywords, filtered to the specific user.
-        Supports case-insensitive and substring concept matching.
+        Supports exact match and substring concept matching with length boundaries.
         """
+        if not query_keywords:
+            return []
         uid = str(user_id) if user_id else None
         query = '''
         MATCH (k:Concept)-[:HAS_CONCEPT]-(m:Memolet)
-        WHERE ANY(kw IN $keywords WHERE toLower(k.name) CONTAINS toLower(kw) OR toLower(kw) CONTAINS toLower(k.name))
+        WHERE ANY(kw IN $keywords WHERE toLower(k.name) = toLower(kw) 
+                 OR (size(kw) >= 3 AND toLower(k.name) CONTAINS toLower(kw)) 
+                 OR (size(k.name) >= 3 AND toLower(kw) CONTAINS toLower(k.name)))
           AND ($user_id IS NULL OR m.user_id = $user_id)
         RETURN m.id AS memolet_id, collect(k.name) as concepts, m.text as string_content
         '''

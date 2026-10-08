@@ -225,32 +225,56 @@ export default function GetMemoryOverlay() {
       .finally(() => setLoading(false));
   }, [leftSidebarOpen, memoriesNeedsSync, setMemoriesNeedsSync]);
 
-  // Debounced RAG search
+  // Instant client-side filter + Debounced GraphRAG search
   useEffect(() => {
     if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
-    if (!searchQuery.trim()) {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
       setDisplayMemories(allMemories);
+      setSearching(false);
       return;
     }
+
+    // Step 1: Immediate local filter (<1ms) so the UI responds instantly without any lag
+    const qLower = trimmed.toLowerCase();
+    const tokens = qLower.split(/\s+/).filter((t) => t.length >= 2);
+    const localFiltered = allMemories.filter((m) => {
+      const text = (m.text || '').toLowerCase();
+      const kws = (m.keywords || []).map((k) => k.toLowerCase());
+      if (text.includes(qLower) || kws.some((k) => k.includes(qLower))) return true;
+      if (tokens.length > 0 && tokens.some((t) => kws.some((k) => k.includes(t)) || text.includes(t))) {
+        return true;
+      }
+      return false;
+    });
+    localFiltered.sort((a, b) => {
+      const aText = (a.text || '').toLowerCase();
+      const bText = (b.text || '').toLowerCase();
+      const aExact = aText.includes(qLower) ? 1 : 0;
+      const bExact = bText.includes(qLower) ? 1 : 0;
+      return bExact - aExact;
+    });
+    setDisplayMemories(localFiltered);
+
+    // Step 2: Background GraphRAG search with AbortController to enrich and confirm rankings
+    const controller = new AbortController();
     searchTimerRef.current = setTimeout(async () => {
       setSearching(true);
       try {
-        const results = await memoriesApi.search(searchQuery);
-        setDisplayMemories(results);
-      } catch {
-        // Fallback to client-side filter
-        setDisplayMemories(
-          allMemories.filter((m) =>
-            m.text?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            m.keywords?.some((k) => k.toLowerCase().includes(searchQuery.toLowerCase()))
-          )
-        );
+        const results = await memoriesApi.search(trimmed, controller.signal);
+        if (results && results.length > 0) {
+          setDisplayMemories(results);
+        }
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
       } finally {
         setSearching(false);
       }
-    }, 400);
+    }, 280);
+
     return () => {
       if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+      controller.abort();
     };
   }, [searchQuery, allMemories]);
 
