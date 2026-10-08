@@ -34,7 +34,8 @@ class Settings(BaseSettings):
     CLERK_FRONTEND_API_URL: Optional[str] = "https://fine-ladybug-8955.clerk.accounts.dev"
     CLERK_BACKEND_API_URL: Optional[str] = "https://api.clerk.com"
     CLERK_JWKS_URL: Optional[str] = "https://fine-ladybug-8955.clerk.accounts.dev/.well-known/jwks.json"
-    CLERK_PEM_PUBLIC_KEY: Optional[str] = None
+    CORS_ORIGINS: str = "http://localhost,http://localhost:3000,http://127.0.0.1:3000"
+    REDIS_URL: Optional[str] = None
     JWT_SECRET: str = "super_secret_jwt_key_here"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 7 # 1 week
     
