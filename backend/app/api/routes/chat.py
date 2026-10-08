@@ -57,7 +57,7 @@ def process_response_trust_and_citations(
     4. Deduplicates message-level citations.
     """
     if not contents or not memolets:
-        return reply_text, [reply_text], [0.0], [[]], []
+        return reply_text, [reply_text], [], [], []
 
     active_ids = [str(m.id) for m in memolets]
 

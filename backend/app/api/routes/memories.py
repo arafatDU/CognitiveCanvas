@@ -82,9 +82,7 @@ def get_cached_user_memolets(db: Session, user_id: str) -> list[MemoletModel]:
     uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
     mems = db.query(MemoletModel).filter(
         (MemoletModel.user_id == uid) |
-        (MemoletModel.conversation_id.in_(
-            db.query(Conversation.id).filter(Conversation.user_id == uid)
-        ))
+        (MemoletModel.conversation.has(user_id=uid))
     ).order_by(MemoletModel.created_at.asc()).all()
     _USER_MEMOLETS_CACHE[user_id] = (now, mems)
     return mems

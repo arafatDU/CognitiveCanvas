@@ -1,7 +1,30 @@
 from sqlalchemy.orm import Session
 from app.models.memolet import Memolet
 import numpy as np
-from sklearn.cluster import KMeans
+import random
+
+
+def simple_kmeans(data: np.ndarray, k: int, max_iter: int = 50) -> list[int]:
+    """Pure NumPy K-Means clustering to eliminate scikit-learn & scipy dependency."""
+    n = len(data)
+    if n <= k:
+        return list(range(n))
+    np.random.seed(42)
+    indices = np.random.choice(n, size=k, replace=False)
+    centroids = data[indices].copy()
+    labels = np.zeros(n, dtype=int)
+    for _ in range(max_iter):
+        distances = np.linalg.norm(data[:, np.newaxis] - centroids, axis=2)
+        new_labels = np.argmin(distances, axis=1)
+        if np.array_equal(labels, new_labels):
+            break
+        labels = new_labels
+        for j in range(k):
+            members = data[labels == j]
+            if len(members) > 0:
+                centroids[j] = members.mean(axis=0)
+    return labels.tolist()
+
 
 class SandboxService:
     def __init__(self):
@@ -10,7 +33,7 @@ class SandboxService:
     def organize_memolets(self, db: Session, memolets: list[Memolet], n_clusters=3):
         """
         LLM-Driven Auto-Organize:
-        Triggers K-Means clustering scattered Memolets based on their 1536-dim embeddings.
+        Triggers K-Means clustering scattered Memolets based on their embeddings.
         """
         if len(memolets) < n_clusters or len(memolets) == 0:
             return memolets # Not enough data
@@ -18,21 +41,20 @@ class SandboxService:
         embeddings = []
         valid_memolets = []
         for m in memolets:
-            if m.embedding is not None and len(m.embedding) == 1536:
+            if m.embedding is not None and len(m.embedding) in (384, 1536):
                 embeddings.append(m.embedding)
                 valid_memolets.append(m)
                 
         if len(valid_memolets) < n_clusters:
             return valid_memolets
             
-        embeddings_np = np.array(embeddings)
-        kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(embeddings_np)
+        embeddings_np = np.array(embeddings, dtype=np.float32)
+        labels = simple_kmeans(embeddings_np, k=n_clusters)
         
         # Determine 2D coordinates for centroids
-        import random
         cluster_centers_2d = [(random.randint(100, 900), random.randint(100, 900)) for _ in range(n_clusters)]
         
-        for i, label in enumerate(kmeans.labels_):
+        for i, label in enumerate(labels):
             # Move memolets to cluster centers + random spread
             spread = 50
             if valid_memolets[i]:

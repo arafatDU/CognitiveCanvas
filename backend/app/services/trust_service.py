@@ -1,7 +1,21 @@
 from app.services.retrieval import retrieval_service
 from app.services.llm_router import llm_router
-from sklearn.metrics.pairwise import cosine_similarity
 import numpy as np
+
+
+def cosine_similarity(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    """Computes pairwise cosine similarity using pure NumPy without scikit-learn."""
+    a = np.asarray(a, dtype=np.float32)
+    b = np.asarray(b, dtype=np.float32)
+    if a.ndim == 1:
+        a = a.reshape(1, -1)
+    if b.ndim == 1:
+        b = b.reshape(1, -1)
+    norm_a = np.linalg.norm(a, axis=1, keepdims=True)
+    norm_b = np.linalg.norm(b, axis=1, keepdims=True)
+    norm_a[norm_a == 0] = 1e-9
+    norm_b[norm_b == 0] = 1e-9
+    return np.dot(a, b.T) / np.dot(norm_a, norm_b.T)
 
 class TrustService:
     def __init__(self):

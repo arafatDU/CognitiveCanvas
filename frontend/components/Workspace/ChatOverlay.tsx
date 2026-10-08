@@ -445,14 +445,17 @@ export default function ChatOverlay() {
     }
 
     const effectiveActiveIds =
-      bundledActiveIdSet.size > 0 ? Array.from(bundledActiveIdSet) : spatialContext.activeMemoletIds;
+      bundledActiveIdSet.size > 0 ? Array.from(bundledActiveIdSet) : [];
 
-    let spatialInstructions = spatialContext.instructionText || '';
-    if (bundledDisplayPairs.length > 0) {
-      const bundleInst = `GROUP_CONTEXT: The user cited connected memories. Synthesize context from ${bundledDisplayPairs.join(', ')} cohesively into unified insights, citing all relevant memory sources.`;
-      spatialInstructions = spatialInstructions
-        ? `${spatialInstructions}\n${bundleInst}`
-        : bundleInst;
+    let spatialInstructions = '';
+    if (bundledActiveIdSet.size > 0) {
+      spatialInstructions = spatialContext.instructionText || '';
+      if (bundledDisplayPairs.length > 0) {
+        const bundleInst = `GROUP_CONTEXT: The user cited connected memories. Synthesize context from ${bundledDisplayPairs.join(', ')} cohesively into unified insights, citing all relevant memory sources.`;
+        spatialInstructions = spatialInstructions
+          ? `${spatialInstructions}\n${bundleInst}`
+          : bundleInst;
+      }
     }
 
     const userMsgId = `usr-${Date.now()}`;
@@ -1002,19 +1005,6 @@ export default function ChatOverlay() {
                     </div>
                   );
                 })()}
-
-                {(!msg.citations || msg.citations.length === 0) && msg.confidenceHeatmap && msg.confidenceHeatmap.length > 0 && (
-                  <div className="flex items-center mt-2">
-                    <button
-                      type="button"
-                      onClick={() => setHeatmapModalMessage(msg as HeatmapMessageData)}
-                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 shadow-2xs hover:scale-105 active:scale-95 transition cursor-pointer"
-                      title="Inspect grounding confidence heatmap"
-                    >
-                      🔥 <span>Confidence Heatmap</span>
-                    </button>
-                  </div>
-                )}
               </div>
 
               {msg.role === 'ai' && (

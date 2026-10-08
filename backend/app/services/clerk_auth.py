@@ -38,10 +38,11 @@ class ClerkAuthService:
     def verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify Clerk session token using direct PEM Public Key or JWKS RS256."""
         # 1. Try instant decoding with PEM public key if configured
-        if settings.CLERK_PEM_PUBLIC_KEY:
+        clerk_pem = getattr(settings, "CLERK_PEM_PUBLIC_KEY", None)
+        if clerk_pem:
             try:
                 # Clean up any escaped newlines if passed in .env
-                pem_key = settings.CLERK_PEM_PUBLIC_KEY.replace("\\n", "\n").strip('\"\'')
+                pem_key = clerk_pem.replace("\\n", "\n").strip('\"\'')
                 payload = jwt.decode(
                     token,
                     pem_key,

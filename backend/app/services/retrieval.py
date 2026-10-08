@@ -1,11 +1,32 @@
-from sentence_transformers import SentenceTransformer
 from rank_bm25 import BM25Okapi
 import numpy as np
 
+
+class RetrievalEncoderWrapper:
+    """Lightweight ONNX-based wrapper for all-MiniLM-L6-v2 without PyTorch or CUDA dependencies."""
+    def __init__(self, model_name: str = "sentence-transformers/all-MiniLM-L6-v2"):
+        self.model_name = model_name
+        self._model = None
+
+    @property
+    def model(self):
+        if self._model is None:
+            from fastembed import TextEmbedding
+            self._model = TextEmbedding(model_name=self.model_name)
+        return self._model
+
+    def encode(self, texts: str | list[str]) -> np.ndarray:
+        if isinstance(texts, str):
+            embs = list(self.model.embed([texts]))
+            return np.array(embs[0], dtype=np.float32)
+        if not texts:
+            return np.empty((0, 384), dtype=np.float32)
+        return np.array(list(self.model.embed(texts)), dtype=np.float32)
+
+
 class RetrievalService:
     def __init__(self):
-        # We will load embedding models lazily or globally
-        self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+        self.encoder = RetrievalEncoderWrapper()
         self._query_cache: dict[str, np.ndarray] = {}
 
     def encode_text(self, text: str) -> list[float]:
@@ -15,7 +36,7 @@ class RetrievalService:
         q = query.strip().lower()
         if q in self._query_cache:
             return self._query_cache[q]
-        emb = np.array(self.encoder.encode(query), dtype=np.float32)
+        emb = self.encoder.encode(query)
         if len(self._query_cache) >= 1000:
             self._query_cache.clear()
         self._query_cache[q] = emb
