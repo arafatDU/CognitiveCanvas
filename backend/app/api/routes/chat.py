@@ -3,8 +3,9 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 import json
+import re
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 from app.api import deps
 from app.db.session import get_db
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 class ChatRequest(BaseModel):
     message: str
     active_memolet_ids: List[str] = []
+    memolet_display_map: Optional[Dict[str, str]] = None
     model: Optional[str] = None
     conversation_id: Optional[str] = None
     spatial_instructions: Optional[str] = None
@@ -40,6 +42,65 @@ class ChatResponse(BaseModel):
     conversation_id: str
     model: Optional[str] = None
     deprecation_warnings: List[Dict[str, Any]] = []
+
+
+def process_response_trust_and_citations(
+    reply_text: str,
+    contents: List[str],
+    memolets: List[MemoletModel],
+    display_map: Dict[str, str]
+) -> Tuple[str, List[str], List[float], List[List[str]], List[str]]:
+    """
+    1. Segments reply_text into logical lines/bullet items preserving markdown.
+    2. Computes sentence-level confidence heatmap & traces citations.
+    3. Injects [[citation:DISPLAY_ID]] inline at the sentence/bullet level if not already present.
+    4. Deduplicates message-level citations.
+    """
+    if not contents or not memolets:
+        return reply_text, [reply_text], [0.0], [[]], []
+
+    active_ids = [str(m.id) for m in memolets]
+
+    raw_lines = reply_text.split("\n")
+    evaluated_indices = []
+    evaluation_units = []
+
+    for idx, line in enumerate(raw_lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#") or stripped.startswith("```") or stripped.startswith("---"):
+            continue
+        clean_content = re.sub(r"^(\s*[-*+]|\s*\d+\.)\s+", "", stripped).strip()
+        clean_content = re.sub(r"[*_~`]", "", clean_content)
+        if len(clean_content) > 10:
+            evaluated_indices.append(idx)
+            evaluation_units.append(clean_content)
+
+    if not evaluation_units:
+        evaluation_units = [reply_text]
+        evaluated_indices = [0]
+
+    heatmap = trust_service.compute_confidence_heatmap(evaluation_units, contents)
+    citations = trust_service.trace_citations(evaluation_units, contents, active_ids)
+
+    augmented_lines = list(raw_lines)
+    all_cited_ids = []
+
+    for k, line_idx in enumerate(evaluated_indices):
+        unit_cites = citations[k] if k < len(citations) else []
+        if unit_cites:
+            all_cited_ids.extend(unit_cites)
+            cite_id = unit_cites[0]
+            disp_id = display_map.get(cite_id) or cite_id[:6]
+            curr_line = augmented_lines[line_idx]
+            if f"[[citation:{disp_id}]]" not in curr_line and "[citation:" not in curr_line:
+                augmented_lines[line_idx] = f"{curr_line} [[citation:{disp_id}]]"
+
+    augmented_reply = "\n".join(augmented_lines)
+    unique_citations = list(dict.fromkeys(all_cited_ids))
+
+    return augmented_reply, evaluation_units, heatmap, citations, unique_citations
 
 
 
@@ -129,11 +190,18 @@ def generate_chat(
 
     # 3. Build prompt and call LLM
     llm_messages = []
+    display_map = req.memolet_display_map or {}
     if contents:
+        labeled_blocks = []
+        for m in memolets:
+            disp = display_map.get(str(m.id)) or str(m.id)[:6]
+            labeled_blocks.append(f"[Memory Node {disp}]:\n{m.text}")
+        memory_context_str = "\n---\n".join(labeled_blocks) if labeled_blocks else "\n---\n".join(contents)
+
         system_prompt = (
             "You are an intelligent AI assistant. "
             "Answer the user's prompt directly, accurately, and thoroughly using the provided Memory Context where relevant.\n\n"
-            "Memory Context:\n" + "\n---\n".join(contents)
+            "Memory Context:\n" + memory_context_str
         )
         if deprecation_warnings:
             time_info = temporal_auditor_service.get_current_time_grounding()
@@ -172,15 +240,10 @@ def generate_chat(
     except (KeyError, TypeError, IndexError):
         reply_text = "Internal LLM routing error occurred."
 
-    # 4. Process heatmaps & citations
-    sentences = [s.strip() + "." for s in reply_text.split(".") if len(s.strip()) > 3]
-    if not sentences:
-        sentences = [reply_text]
-
-    heatmap = trust_service.compute_confidence_heatmap(sentences, contents)
-    citations = trust_service.trace_citations(sentences, contents, active_ids)
-    
-    flattened_citations = [c for sublist in citations for c in sublist] if citations else []
+    # 4. Process heatmaps & inline citations
+    reply_text, sentences, heatmap, citations, unique_citations = process_response_trust_and_citations(
+        reply_text, contents, memolets, display_map
+    )
 
     if not conversation.title:
         words = reply_text.split()
@@ -190,7 +253,7 @@ def generate_chat(
         conversation_id=conversation.id,
         role="ai",
         content=reply_text,
-        citations=flattened_citations
+        citations=unique_citations
     )
     db.add(ai_msg)
     db.commit()
@@ -272,11 +335,18 @@ def generate_chat_stream(
     conflict_warning = trust_service.evaluate_conflict(contents)
 
     llm_messages = []
+    display_map = req.memolet_display_map or {}
     if contents:
+        labeled_blocks = []
+        for m in memolets:
+            disp = display_map.get(str(m.id)) or str(m.id)[:6]
+            labeled_blocks.append(f"[Memory Node {disp}]:\n{m.text}")
+        memory_context_str = "\n---\n".join(labeled_blocks) if labeled_blocks else "\n---\n".join(contents)
+
         system_prompt = (
             "You are an intelligent AI assistant. "
             "Answer the user's prompt directly, accurately, and thoroughly using the provided Memory Context where relevant.\n\n"
-            "Memory Context:\n" + "\n---\n".join(contents)
+            "Memory Context:\n" + memory_context_str
         )
         if deprecation_warnings:
             time_info = temporal_auditor_service.get_current_time_grounding()
@@ -315,14 +385,10 @@ def generate_chat_stream(
             full_reply.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
-        reply_text = "".join(full_reply)
-        sentences = [s.strip() + "." for s in reply_text.split(".") if len(s.strip()) > 3]
-        if not sentences:
-            sentences = [reply_text]
-
-        heatmap = trust_service.compute_confidence_heatmap(sentences, contents)
-        citations = trust_service.trace_citations(sentences, contents, active_ids)
-        flattened_citations = [c for sublist in citations for c in sublist] if citations else []
+        raw_reply_text = "".join(full_reply)
+        reply_text, sentences, heatmap, citations, unique_citations = process_response_trust_and_citations(
+            raw_reply_text, contents, memolets, display_map
+        )
 
         if not conversation.title:
             words = reply_text.split()
@@ -332,7 +398,7 @@ def generate_chat_stream(
             conversation_id=conversation.id,
             role="ai",
             content=reply_text,
-            citations=flattened_citations
+            citations=unique_citations
         )
         db.add(ai_msg)
         db.commit()
@@ -340,6 +406,8 @@ def generate_chat_stream(
         final_payload = {
             "done": True,
             "conversation_id": str(conversation.id),
+            "reply": reply_text,
+            "sentences": sentences,
             "citations": citations,
             "confidence_heatmap": heatmap,
             "conflict_warning": conflict_warning,

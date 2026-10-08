@@ -105,6 +105,12 @@ interface MemoletState {
   memoriesNeedsSync: boolean;
   setMemoriesNeedsSync: (needsSync: boolean) => void;
   resetStore: () => void;
+
+  // Per-User Canvas State Persistence
+  currentUserId: string | null;
+  setCurrentUserId: (id: string | null) => void;
+  loadUserCanvasState: (userId: string) => void;
+  saveUserCanvasState: (userId?: string) => void;
 }
 
 const DEFAULT_CLUSTERS: CanvasCluster[] = [
@@ -125,11 +131,53 @@ export const useMemoletStore = create<MemoletState>((set, get) => ({
   memoriesNeedsSync: true,
   clusters: DEFAULT_CLUSTERS,
   activeVoronoi: true,
+  currentUserId: null,
 
   setClusters: (clusters) => set({ clusters }),
   toggleVoronoi: () => set((state) => ({ activeVoronoi: !state.activeVoronoi })),
   setImportModalOpen: (isOpen) => set({ importModalOpen: isOpen }),
   setActiveConversationId: (id) => set({ activeConversationId: id }),
+  setCurrentUserId: (id) => set({ currentUserId: id }),
+
+  loadUserCanvasState: (userId: string) => {
+    if (typeof window === 'undefined' || !userId) return;
+    const key = `memolet_canvas_state_${userId}`;
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const data = JSON.parse(raw);
+        if (Array.isArray(data.nodes)) {
+          set({
+            nodes: data.nodes,
+            edges: Array.isArray(data.edges) ? data.edges : [],
+            currentUserId: userId,
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load canvas state:', e);
+    }
+    set({ currentUserId: userId });
+  },
+
+  saveUserCanvasState: (userId?: string) => {
+    if (typeof window === 'undefined') return;
+    const uid = userId || get().currentUserId;
+    if (!uid) return;
+    try {
+      const key = `memolet_canvas_state_${uid}`;
+      localStorage.setItem(
+        key,
+        JSON.stringify({
+          nodes: get().nodes,
+          edges: get().edges,
+        })
+      );
+    } catch (e) {
+      console.warn('Failed to save canvas state:', e);
+    }
+  },
 
   resetStore: () =>
     set({
@@ -141,6 +189,7 @@ export const useMemoletStore = create<MemoletState>((set, get) => ({
       activeConversationId: null,
       selectedNodeId: null,
       memoriesNeedsSync: true,
+      currentUserId: null,
     }),
 
   setNodes: (nodes) => set({ nodes }),
@@ -332,3 +381,47 @@ export const useMemoletStore = create<MemoletState>((set, get) => ({
     });
   },
 }));
+
+// Automatic Debounced Persistence for Active User Canvas
+if (typeof window !== 'undefined') {
+  let saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  useMemoletStore.subscribe((state) => {
+    const userId = state.currentUserId;
+    if (!userId) return;
+
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try {
+        const key = `memolet_canvas_state_${userId}`;
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            nodes: state.nodes,
+            edges: state.edges,
+          })
+        );
+      } catch (err) {
+        console.warn('Failed to auto-save canvas state:', err);
+      }
+    }, 250);
+  });
+
+  window.addEventListener('beforeunload', () => {
+    const state = useMemoletStore.getState();
+    const userId = state.currentUserId;
+    if (userId) {
+      try {
+        const key = `memolet_canvas_state_${userId}`;
+        localStorage.setItem(
+          key,
+          JSON.stringify({
+            nodes: state.nodes,
+            edges: state.edges,
+          })
+        );
+      } catch {}
+    }
+  });
+}
+

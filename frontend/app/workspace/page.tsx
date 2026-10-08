@@ -26,6 +26,7 @@ function WorkspaceInner() {
   const [loadingCanvas, setLoadingCanvas] = useState(false);
 
   const handleLogout = () => {
+    useMemoletStore.getState().setCurrentUserId(null);
     logout();
     resetStore();
     router.replace('/');
@@ -82,9 +83,8 @@ function WorkspaceInner() {
         // Ignore seed errors — DB may already have data
       });
 
-      // We intentionally do NOT load all memories onto the canvas here.
-      // The Sandbox Canvas acts as a curated "instant memory" space,
-      // and users will manually pull in nodes from the "Get Memory" tab.
+      // The Sandbox Canvas acts as a curated "instant memory" space.
+      // Persisted user state is restored via loadUserCanvasState.
     } catch (err) {
       console.error('Failed to init DB:', err);
     } finally {
@@ -93,14 +93,17 @@ function WorkspaceInner() {
   };
 
   useEffect(() => {
-    const currentUserId = clerkUser?.id ?? 'local';
+    const currentUserId = clerkUser?.id || user?.id || user?.username || 'local_user';
     if (prevUserIdRef.current && prevUserIdRef.current !== currentUserId) {
       // User switched — clear canvas and caches
       resetStore();
     }
     prevUserIdRef.current = currentUserId;
+
+    // Restore this user's persisted canvas working state (nodes, edges, positions, weights)
+    useMemoletStore.getState().loadUserCanvasState(currentUserId);
     loadCanvasFromDB();
-  }, [clerkUser?.id]);
+  }, [clerkUser?.id, user?.id, user?.username]);
 
   return (
     <main className="flex h-screen w-full bg-[#f1f5f9] overflow-hidden text-gray-900 antialiased relative">
