@@ -348,6 +348,7 @@ export interface ConversationResponse extends ConversationListResponse {
 export interface ChatRequest {
   message: string;
   active_memolet_ids: string[];
+  memolet_display_map?: Record<string, string>;
   model?: string;
   conversation_id?: string;
   spatial_instructions?: string;
@@ -410,6 +411,8 @@ export const chatApi = {
     onToken: (token: string) => void,
     onComplete: (data: {
       conversation_id: string;
+      reply?: string;
+      sentences?: string[];
       citations?: string[][];
       model?: string;
       confidence_heatmap?: number[];

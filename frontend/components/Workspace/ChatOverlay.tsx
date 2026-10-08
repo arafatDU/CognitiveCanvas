@@ -9,6 +9,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { CitationBadge } from './CitationBadge';
 import { compileSpatialContext } from '@/lib/spatialCompiler';
+import { ConfidenceHeatmapModal, HeatmapMessageData } from './ConfidenceHeatmapModal';
 
 type Message = {
   id?: string;
@@ -17,6 +18,9 @@ type Message = {
   citations?: string[];
   model?: string;
   deprecationWarnings?: DeprecationWarning[];
+  sentences?: string[];
+  confidenceHeatmap?: number[];
+  sentenceCitations?: string[][];
 };
 
 const SUGGESTION_STOPWORDS = new Set([
@@ -59,6 +63,7 @@ export default function ChatOverlay() {
   const [conversations, setConversations] = useState<ConversationListResponse[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [heatmapModalMessage, setHeatmapModalMessage] = useState<HeatmapMessageData | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -369,10 +374,18 @@ export default function ChatOverlay() {
     setInputValue('');
     setLoading(true);
 
+    const memoletDisplayMap: Record<string, string> = {};
+    for (const node of nodes) {
+      if (node.data?.displayId) {
+        memoletDisplayMap[node.id] = node.data.displayId;
+      }
+    }
+
     chatApi.sendStream(
       {
         message: text,
         active_memolet_ids: effectiveActiveIds,
+        memolet_display_map: memoletDisplayMap,
         model: selectedModel || undefined,
         conversation_id: currentConversationId || undefined,
         spatial_instructions: spatialInstructions || undefined,
@@ -392,20 +405,22 @@ export default function ChatOverlay() {
         } else if (currentConversationId && messages.length === 0) {
           fetchConversations();
         }
-        if (data.citations || data.model || data.deprecation_warnings) {
-          setMessages((prev) =>
-            prev.map((msg) =>
-              msg.id === aiMsgId
-                ? {
-                    ...msg,
-                    citations: data.citations?.flat() ?? [],
-                    model: data.model ?? selectedModel,
-                    deprecationWarnings: data.deprecation_warnings ?? [],
-                  }
-                : msg
-            )
-          );
-        }
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === aiMsgId
+              ? {
+                  ...msg,
+                  content: data.reply || msg.content,
+                  citations: data.citations?.flat() ?? [],
+                  sentences: data.sentences ?? [],
+                  confidenceHeatmap: data.confidence_heatmap ?? [],
+                  sentenceCitations: data.citations ?? [],
+                  model: data.model ?? selectedModel,
+                  deprecationWarnings: data.deprecation_warnings ?? [],
+                }
+              : msg
+          )
+        );
       },
       (err) => {
         setLoading(false);
@@ -814,16 +829,43 @@ export default function ChatOverlay() {
                   msg.content
                 )}
 
-                {msg.citations && msg.citations.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mt-2.5 items-center">
-                    <span className="text-[10px] text-gray-400 font-semibold mr-0.5">Citations:</span>
-                    {msg.citations.map((citeId, j) => {
-                      const citedNode = nodes.find(n => n.id === citeId);
-                      const display = citedNode?.data?.displayId ?? citeId.substring(0, 6);
-                      return (
-                        <CitationBadge key={j} displayId={display} />
-                      );
-                    })}
+                {msg.citations && msg.citations.length > 0 && (() => {
+                  const uniqueCitations = Array.from(new Set(msg.citations));
+                  const hasHeatmap = msg.confidenceHeatmap && msg.confidenceHeatmap.length > 0;
+                  return (
+                    <div className="flex flex-wrap gap-1.5 mt-2.5 items-center">
+                      <span className="text-[10px] text-gray-400 font-semibold mr-0.5">Referenced Memories:</span>
+                      {uniqueCitations.map((citeId, j) => {
+                        const citedNode = nodes.find(n => n.id === citeId);
+                        const display = citedNode?.data?.displayId ?? citeId.substring(0, 6);
+                        return (
+                          <CitationBadge key={j} displayId={display} />
+                        );
+                      })}
+                      {hasHeatmap && (
+                        <button
+                          type="button"
+                          onClick={() => setHeatmapModalMessage(msg as HeatmapMessageData)}
+                          className="ml-2 inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 shadow-2xs hover:scale-105 active:scale-95 transition cursor-pointer"
+                          title="Inspect sentence-level grounding confidence heatmap"
+                        >
+                          🔥 <span>Confidence Heatmap</span>
+                        </button>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {(!msg.citations || msg.citations.length === 0) && msg.confidenceHeatmap && msg.confidenceHeatmap.length > 0 && (
+                  <div className="flex items-center mt-2">
+                    <button
+                      type="button"
+                      onClick={() => setHeatmapModalMessage(msg as HeatmapMessageData)}
+                      className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-semibold bg-gray-50 hover:bg-gray-100 text-gray-700 border border-gray-200 shadow-2xs hover:scale-105 active:scale-95 transition cursor-pointer"
+                      title="Inspect grounding confidence heatmap"
+                    >
+                      🔥 <span>Confidence Heatmap</span>
+                    </button>
                   </div>
                 )}
               </div>
@@ -1071,6 +1113,12 @@ export default function ChatOverlay() {
         </div>
       </div>
 
+      <ConfidenceHeatmapModal
+        isOpen={!!heatmapModalMessage}
+        onClose={() => setHeatmapModalMessage(null)}
+        message={heatmapModalMessage}
+        nodes={nodes}
+      />
     </div>
   );
 }
