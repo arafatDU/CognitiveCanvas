@@ -121,6 +121,7 @@ def get_available_models():
 
 
 
+@router.post("", response_model=ChatResponse)
 @router.post("/", response_model=ChatResponse)
 def generate_chat(
     req: ChatRequest,
@@ -271,6 +272,7 @@ def generate_chat(
 
 
 @router.post("/stream")
+@router.post("/stream/")
 def generate_chat_stream(
     req: ChatRequest,
     db: Session = Depends(get_db),
@@ -378,34 +380,48 @@ def generate_chat_stream(
         llm_messages.append({"role": "user", "content": req.message})
 
     selected_model = req.model or llm_router.default_model
+    conv_id_str = str(conversation.id)
 
     def event_stream():
         full_reply = []
-        for token in llm_router.generate_response_stream(llm_messages, model=selected_model):
-            full_reply.append(token)
-            yield f"data: {json.dumps({'token': token})}\n\n"
+        try:
+            for token in llm_router.generate_response_stream(llm_messages, model=selected_model):
+                full_reply.append(token)
+                yield f"data: {json.dumps({'token': token})}\n\n"
+        except Exception as stream_err:
+            logger.error(f"Error during response streaming: {stream_err}")
+            err_msg = f"\n\n[Generation note: stream encountered {str(stream_err)}]"
+            full_reply.append(err_msg)
+            yield f"data: {json.dumps({'token': err_msg})}\n\n"
 
         raw_reply_text = "".join(full_reply)
         reply_text, sentences, heatmap, citations, unique_citations = process_response_trust_and_citations(
             raw_reply_text, contents, memolets, display_map
         )
 
-        if not conversation.title:
-            words = reply_text.split()
-            conversation.title = " ".join(words[:5]) + ("..." if len(words) > 5 else "")
+        # Persist final assistant reply using a fresh isolated DB session
+        from app.db.session import SessionLocal
+        try:
+            with SessionLocal() as stream_db:
+                conv_to_update = stream_db.query(Conversation).filter(Conversation.id == conv_id_str).first()
+                if conv_to_update and not conv_to_update.title:
+                    words = reply_text.split()
+                    conv_to_update.title = " ".join(words[:5]) + ("..." if len(words) > 5 else "")
 
-        ai_msg = ChatMessage(
-            conversation_id=conversation.id,
-            role="ai",
-            content=reply_text,
-            citations=unique_citations
-        )
-        db.add(ai_msg)
-        db.commit()
+                ai_msg = ChatMessage(
+                    conversation_id=conv_id_str,
+                    role="ai",
+                    content=reply_text,
+                    citations=unique_citations
+                )
+                stream_db.add(ai_msg)
+                stream_db.commit()
+        except Exception as db_err:
+            logger.error(f"Error persisting AI chat message to DB: {db_err}")
 
         final_payload = {
             "done": True,
-            "conversation_id": str(conversation.id),
+            "conversation_id": conv_id_str,
             "reply": reply_text,
             "sentences": sentences,
             "citations": citations,
@@ -416,7 +432,13 @@ def generate_chat_stream(
         }
         yield f"data: {json.dumps(final_payload)}\n\n"
 
-    return StreamingResponse(event_stream(), media_type="text/event-stream")
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "X-Accel-Buffering": "no",
+    }
+    return StreamingResponse(event_stream(), media_type="text/event-stream", headers=headers)
 
 @router.get("/conversations", response_model=List[ConversationListResponse])
 def get_conversations(db: Session = Depends(get_db), current_user: User = Depends(deps.get_current_user)):

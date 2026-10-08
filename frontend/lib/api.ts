@@ -1,5 +1,24 @@
-const API_BASE =
-  process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000/api/v1';
+export function getApiBase(): string {
+  const envUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (envUrl && envUrl.trim()) {
+    return envUrl.trim().replace(/\/+$/, '');
+  }
+  // When running in a deployed environment (e.g. Vercel), default to the production Render backend
+  if (
+    typeof window !== 'undefined' &&
+    window.location.hostname !== 'localhost' &&
+    window.location.hostname !== '127.0.0.1'
+  ) {
+    return 'https://cognitivecanvas-backend.onrender.com/api/v1';
+  }
+  return 'http://localhost:8000/api/v1';
+}
+
+export function buildApiUrl(path: string): string {
+  const base = getApiBase();
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${base}${cleanPath}`;
+}
 
 let clerkTokenGetter: (() => Promise<string | null>) | null = null;
 
@@ -52,7 +71,7 @@ export async function apiFetch<T = unknown>(
     mergedHeaders['Authorization'] = `Bearer ${token}`;
   }
 
-  const res = await fetch(`${API_BASE}${path}`, {
+  const res = await fetch(buildApiUrl(path), {
     headers: mergedHeaders,
     ...rest,
   });
@@ -427,15 +446,17 @@ export const chatApi = {
     };
     if (token) headers['Authorization'] = `Bearer ${token}`;
 
+    let hasReceivedTokens = false;
+
     try {
-      const res = await fetch(`${API_BASE}/chat/stream`, {
+      const res = await fetch(buildApiUrl('/chat/stream'), {
         method: 'POST',
         headers,
         body: JSON.stringify(payload),
       });
 
       if (!res.ok) {
-        const err = await res.json().catch(() => ({ detail: res.statusText }));
+        const err = await res.json().catch(() => ({ detail: res.statusText || `HTTP ${res.status}` }));
         throw new Error(err.detail ?? `HTTP ${res.status}`);
       }
 
@@ -460,6 +481,7 @@ export const chatApi = {
             try {
               const data = JSON.parse(jsonStr);
               if (data.token) {
+                hasReceivedTokens = true;
                 onToken(data.token);
               }
               if (data.done) {
@@ -472,6 +494,31 @@ export const chatApi = {
         }
       }
     } catch (err: unknown) {
+      // If streaming encountered a network or CORS issue before any tokens were received,
+      // gracefully fall back to the standard non-streaming chat endpoint
+      if (!hasReceivedTokens) {
+        console.warn('Chat stream failed, falling back to standard non-streaming chat endpoint:', err);
+        try {
+          const fallbackData = await chatApi.send(payload);
+          if (fallbackData.reply) {
+            onToken(fallbackData.reply);
+          }
+          onComplete({
+            conversation_id: fallbackData.conversation_id,
+            reply: fallbackData.reply,
+            sentences: fallbackData.sentences,
+            citations: fallbackData.citations,
+            model: fallbackData.model,
+            confidence_heatmap: fallbackData.confidence_heatmap,
+            conflict_warning: fallbackData.conflict_warning,
+            deprecation_warnings: fallbackData.deprecation_warnings,
+          });
+          return;
+        } catch (fallbackErr: unknown) {
+          onError(fallbackErr instanceof Error ? fallbackErr : new Error('Chat request failed'));
+          return;
+        }
+      }
       onError(err instanceof Error ? err : new Error('Stream request failed'));
     }
   },
