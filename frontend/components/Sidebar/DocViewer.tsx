@@ -56,15 +56,15 @@ export default function DocViewer() {
 
   if (!selectedNodeId || !selectedNode) {
     return (
-      <div className="w-[30%] min-w-[320px] max-w-[460px] flex flex-col h-full bg-white border-l border-gray-200 shadow-sm flex-shrink-0 overflow-hidden transition-all duration-300">
+      <div className="w-[30%] min-w-[320px] max-w-[460px] flex flex-col h-full bg-white dark:bg-[#0f172a] border-l border-gray-200 dark:border-slate-800 shadow-sm flex-shrink-0 overflow-hidden transition-all duration-300">
         {/* Empty state header */}
-        <div className="flex items-center justify-between bg-gray-50 border-b border-gray-200 px-4 py-3">
-          <div className="font-semibold text-sm text-gray-700 flex items-center gap-2">
-            <FileText size={14} className="text-gray-400" />
+        <div className="flex items-center justify-between bg-gray-50 dark:bg-[#1e293b] border-b border-gray-200 dark:border-slate-800 px-4 py-3">
+          <div className="font-semibold text-sm text-gray-700 dark:text-slate-200 flex items-center gap-2">
+            <FileText size={14} className="text-gray-400 dark:text-slate-500" />
             Document View
           </div>
         </div>
-        <div className="flex-1 bg-white flex items-center justify-center text-gray-400 text-sm">
+        <div className="flex-1 bg-white dark:bg-[#0f172a] flex items-center justify-center text-gray-400 dark:text-slate-500 text-sm">
           Select a memolet to view details
         </div>
       </div>
@@ -72,13 +72,13 @@ export default function DocViewer() {
   }
 
   return (
-    <div className="w-[30%] min-w-[320px] max-w-[460px] flex flex-col h-full bg-white border-l border-gray-200 shadow-sm flex-shrink-0 overflow-hidden transition-all duration-300 relative">
+    <div className="w-[30%] min-w-[320px] max-w-[460px] flex flex-col h-full bg-white dark:bg-[#0f172a] border-l border-gray-200 dark:border-slate-800 shadow-sm flex-shrink-0 overflow-hidden transition-all duration-300 relative">
       {/* Header */}
-      <div className="flex items-center justify-between bg-gray-50 border-b border-gray-200 px-4 py-3">
-        <div className="font-semibold text-sm text-gray-700 flex items-center gap-2">
+      <div className="flex items-center justify-between bg-gray-50 dark:bg-[#1e293b] border-b border-gray-200 dark:border-slate-800 px-4 py-3">
+        <div className="font-semibold text-sm text-gray-700 dark:text-slate-200 flex items-center gap-2">
           <FileText size={14} className="text-blue-500" />
           <span>Document View</span>
-          <span className="font-mono text-xs text-gray-400 bg-gray-200/60 px-1.5 py-0.5 rounded">
+          <span className="font-mono text-xs text-gray-400 dark:text-slate-400 bg-gray-200/60 dark:bg-slate-800 px-1.5 py-0.5 rounded">
             {selectedNode.data?.displayId ?? selectedNode.id.substring(0, 6)}
           </span>
         </div>
@@ -88,7 +88,7 @@ export default function DocViewer() {
             setActiveTab(0);
             setSelectedSnippet(null);
           }}
-          className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition cursor-pointer"
+          className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
           title="Close Doc Viewer"
         >
           <X size={16} />
@@ -97,19 +97,19 @@ export default function DocViewer() {
 
       {/* Episode Overview for Multi-Pair Memolets */}
       {isMultiPair && parsedMain.summary && (
-        <div className="bg-indigo-50/70 border-b border-indigo-100 px-4 py-2.5 text-xs flex-shrink-0">
-          <div className="flex items-center gap-1.5 font-bold text-indigo-900 mb-0.5">
+        <div className="bg-indigo-50/70 dark:bg-indigo-950/30 border-b border-indigo-100 dark:border-indigo-900/50 px-4 py-2.5 text-xs flex-shrink-0">
+          <div className="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-200 mb-0.5">
             <span>📚</span>
             <span>Session Episode Overview:</span>
           </div>
-          <p className="text-indigo-900 text-[11px] leading-relaxed line-clamp-3">
+          <p className="text-indigo-900 dark:text-indigo-300 text-[11px] leading-relaxed line-clamp-3">
             {parsedMain.summary}
           </p>
         </div>
       )}
 
       {/* Tabs — one per pair */}
-      <div className="flex bg-[#f3f4f6] border-b border-gray-200 text-xs font-medium px-2 overflow-x-auto flex-shrink-0">
+      <div className="flex bg-[#f3f4f6] dark:bg-[#1e293b]/70 border-b border-gray-200 dark:border-slate-800 text-xs font-medium px-2 overflow-x-auto flex-shrink-0">
         {pairs.map((p, i) => (
           <button
             key={i}
@@ -120,13 +120,13 @@ export default function DocViewer() {
             className={cn(
               'py-2.5 px-4 whitespace-nowrap transition cursor-pointer',
               activeTab === i
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-white'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 bg-white dark:bg-[#0f172a]'
+                : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             )}
           >
             {p.label}
             {pairs.length > 1 && (
-              <span className="ml-1 text-[9px] text-gray-400">
+              <span className="ml-1 text-[9px] text-gray-400 dark:text-slate-500">
                 {i + 1}/{pairs.length}
               </span>
             )}
@@ -136,33 +136,33 @@ export default function DocViewer() {
 
       {/* Content */}
       <div
-        className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] space-y-5 select-text relative"
+        className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] dark:bg-[#090d16] space-y-5 select-text relative transition-colors"
         onMouseUp={handleMouseUp}
       >
         {/* Deprecation Warning & 1-Click Update Banner */}
         {isDeprecated && (
-          <div className="bg-amber-50 border border-amber-300 rounded-xl p-4 shadow-xs">
+          <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl p-4 shadow-xs">
             <div className="flex items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-1.5 text-amber-900 font-bold text-xs">
-                <AlertTriangle size={15} className="text-amber-600 flex-shrink-0" />
+              <div className="flex items-center gap-1.5 text-amber-900 dark:text-amber-300 font-bold text-xs">
+                <AlertTriangle size={15} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
                 <span>Outdated Advice Detected</span>
               </div>
               {temporalAnchor && (
-                <span className="text-[10px] text-amber-800 bg-amber-200/70 font-mono px-2 py-0.5 rounded">
+                <span className="text-[10px] text-amber-800 dark:text-amber-300 bg-amber-200/70 dark:bg-amber-900/60 font-mono px-2 py-0.5 rounded">
                   {temporalAnchor}
                 </span>
               )}
             </div>
 
             {deprecationReason && (
-              <p className="text-xs text-amber-900 leading-relaxed mb-2 font-medium">
+              <p className="text-xs text-amber-900 dark:text-amber-200 leading-relaxed mb-2 font-medium">
                 {deprecationReason}
               </p>
             )}
 
             {suggestedUpdate && (
-              <div className="text-xs text-gray-800 bg-white/90 p-2.5 rounded-lg border border-amber-200 mb-3">
-                <span className="font-bold text-amber-900">Modern Equivalent: </span>
+              <div className="text-xs text-gray-800 dark:text-slate-200 bg-white/90 dark:bg-slate-900/90 p-2.5 rounded-lg border border-amber-200 dark:border-amber-800/60 mb-3">
+                <span className="font-bold text-amber-900 dark:text-amber-300">Modern Equivalent: </span>
                 <span>{suggestedUpdate}</span>
               </div>
             )}
@@ -180,43 +180,43 @@ export default function DocViewer() {
         )}
 
         {!isDeprecated && temporalAnchor && (
-          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200">
+          <div className="flex items-center gap-1.5 text-[11px] text-gray-500 dark:text-slate-400 bg-gray-50 dark:bg-[#1e293b]/60 px-3 py-1.5 rounded-lg border border-gray-200 dark:border-slate-800">
             <Clock size={12} className="text-gray-400" />
-            <span>Temporal context: <strong className="text-gray-700">{temporalAnchor}</strong></span>
+            <span>Temporal context: <strong className="text-gray-700 dark:text-slate-200">{temporalAnchor}</strong></span>
           </div>
         )}
 
         {!selectedNode ? (
-          <p className="text-sm text-gray-400">Node not found.</p>
+          <p className="text-sm text-gray-400 dark:text-slate-500">Node not found.</p>
         ) : tab?.isStructured ? (
           <div className="space-y-5">
             {/* Summary Block */}
             {tab.summary && (
-              <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg shadow-sm">
-                <h4 className="text-[10px] font-bold text-blue-800 mb-1 uppercase tracking-wider">
+              <div className="bg-blue-50 dark:bg-blue-950/30 border-l-4 border-blue-400 dark:border-blue-500 p-4 rounded-r-lg shadow-sm">
+                <h4 className="text-[10px] font-bold text-blue-800 dark:text-blue-300 mb-1 uppercase tracking-wider">
                   Summary
                 </h4>
-                <p className="text-sm text-blue-900 leading-relaxed">{tab.summary}</p>
+                <p className="text-sm text-blue-900 dark:text-blue-200 leading-relaxed">{tab.summary}</p>
               </div>
             )}
 
             {/* User Message */}
             <div>
-              <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-wider">
+              <h4 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 mb-2 uppercase tracking-wider">
                 User
               </h4>
-              <div className="bg-gray-100/80 p-4 rounded-xl text-sm text-gray-800 whitespace-pre-wrap">
+              <div className="bg-gray-100/80 dark:bg-[#1e293b] p-4 rounded-xl text-sm text-gray-800 dark:text-slate-200 whitespace-pre-wrap">
                 {tab.user}
               </div>
             </div>
 
             {/* AI Response */}
             <div>
-              <h4 className="text-[10px] font-bold text-blue-500 mb-2 uppercase tracking-wider flex items-center gap-2">
+              <h4 className="text-[10px] font-bold text-blue-500 dark:text-blue-400 mb-2 uppercase tracking-wider flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-blue-500" />
                 AI Response
               </h4>
-              <div className="border border-gray-100 bg-white p-5 rounded-xl shadow-sm text-sm text-gray-800 whitespace-normal leading-relaxed prose prose-sm prose-blue max-w-none">
+              <div className="border border-gray-100 dark:border-slate-800 bg-white dark:bg-[#0f172a] p-5 rounded-xl shadow-sm text-sm text-gray-800 dark:text-slate-200 whitespace-normal leading-relaxed prose prose-sm prose-blue dark:prose-invert max-w-none">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
                   {tab.ai}
                 </ReactMarkdown>
@@ -224,7 +224,7 @@ export default function DocViewer() {
             </div>
           </div>
         ) : (
-          <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-gray-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
             {tab?.raw ?? selectedNode.data?.text}
           </div>
         )}

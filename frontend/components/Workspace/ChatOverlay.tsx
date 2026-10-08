@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { MessageSquareText, Send, X, Save, Sparkles, Plus, Trash2, MessageSquare, PanelLeft, CheckSquare, Zap, Check, AlertTriangle, RefreshCw } from 'lucide-react';
+import { MessageSquareText, Send, X, Save, Sparkles, Plus, Trash2, MessageSquare, PanelLeft, CheckSquare, Zap, Check, AlertTriangle, RefreshCw, Maximize2, Minimize2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { chatApi, ConversationListResponse, ChatMessageDTO, memoriesApi, MemoletDTO, parseMemoletText, DeprecationWarning, auditorApi, getNextDisplayId } from '@/lib/api';
 import ReactMarkdown from 'react-markdown';
@@ -64,6 +64,97 @@ export default function ChatOverlay() {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [heatmapModalMessage, setHeatmapModalMessage] = useState<HeatmapMessageData | null>(null);
+
+  // Window resizing state (expandable / collapsible by dragging)
+  const [windowSize, setWindowSize] = useState<{ width: number; height: number }>({
+    width: 840,
+    height: 700,
+  });
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [isResizing, setIsResizing] = useState(false);
+
+  // Restore saved chat window size from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('memolet_chat_size');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (typeof parsed.width === 'number' && typeof parsed.height === 'number') {
+          const maxW = typeof window !== 'undefined' ? window.innerWidth - 32 : 1200;
+          const maxH = typeof window !== 'undefined' ? window.innerHeight - 32 : 850;
+          setWindowSize({
+            width: Math.min(Math.max(parsed.width, 420), maxW),
+            height: Math.min(Math.max(parsed.height, 420), maxH),
+          });
+        }
+      }
+    } catch {}
+  }, []);
+
+  const startResizing = useCallback(
+    (e: React.PointerEvent, handleType: 'corner' | 'top' | 'left') => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startW = windowSize.width;
+      const startH = windowSize.height;
+
+      setIsResizing(true);
+      if (isMaximized) setIsMaximized(false);
+
+      const onPointerMove = (moveEvent: PointerEvent) => {
+        const deltaX = startX - moveEvent.clientX; // dragging left expands width
+        const deltaY = startY - moveEvent.clientY; // dragging up expands height
+
+        const maxWidth = Math.max(500, window.innerWidth - 32);
+        const maxHeight = Math.max(450, window.innerHeight - 32);
+
+        let newWidth = startW;
+        let newHeight = startH;
+
+        if (handleType === 'corner' || handleType === 'left') {
+          newWidth = Math.min(Math.max(startW + deltaX, 420), maxWidth);
+        }
+        if (handleType === 'corner' || handleType === 'top') {
+          newHeight = Math.min(Math.max(startH + deltaY, 400), maxHeight);
+        }
+
+        setWindowSize({ width: newWidth, height: newHeight });
+      };
+
+      const onPointerUp = (upEvent: PointerEvent) => {
+        setIsResizing(false);
+        window.removeEventListener('pointermove', onPointerMove);
+        window.removeEventListener('pointerup', onPointerUp);
+        window.removeEventListener('pointercancel', onPointerUp);
+
+        const deltaX = startX - upEvent.clientX;
+        const deltaY = startY - upEvent.clientY;
+        const maxWidth = Math.max(500, window.innerWidth - 32);
+        const maxHeight = Math.max(450, window.innerHeight - 32);
+
+        let finalW = startW;
+        let finalH = startH;
+        if (handleType === 'corner' || handleType === 'left') {
+          finalW = Math.min(Math.max(startW + deltaX, 420), maxWidth);
+        }
+        if (handleType === 'corner' || handleType === 'top') {
+          finalH = Math.min(Math.max(startH + deltaY, 400), maxHeight);
+        }
+
+        try {
+          localStorage.setItem('memolet_chat_size', JSON.stringify({ width: finalW, height: finalH }));
+        } catch {}
+      };
+
+      window.addEventListener('pointermove', onPointerMove);
+      window.addEventListener('pointerup', onPointerUp);
+      window.addEventListener('pointercancel', onPointerUp);
+    },
+    [windowSize, isMaximized]
+  );
 
   const inputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -570,15 +661,62 @@ export default function ChatOverlay() {
   }
 
   return (
-    <div className="absolute right-4 bottom-4 w-[840px] flex h-[700px] max-h-[calc(100vh-6rem)] rounded-2xl bg-white border border-gray-200 shadow-2xl z-40 overflow-hidden">
-      
+    <div
+      style={
+        isMaximized
+          ? {
+              width: 'calc(100% - 2rem)',
+              height: 'calc(100% - 2rem)',
+              maxWidth: 'calc(100vw - 2rem)',
+              maxHeight: 'calc(100vh - 2rem)',
+            }
+          : {
+              width: `${windowSize.width}px`,
+              height: `${windowSize.height}px`,
+              maxWidth: 'calc(100vw - 2rem)',
+              maxHeight: 'calc(100vh - 2rem)',
+            }
+      }
+      className={cn(
+        "absolute right-4 bottom-4 flex rounded-2xl bg-white dark:bg-[#0f172a] border border-gray-200 dark:border-slate-800 shadow-2xl z-40 overflow-hidden transition-[background-color,border-color]",
+        isResizing && "select-none shadow-indigo-500/10 ring-2 ring-indigo-500/20"
+      )}
+    >
+      {/* ── Resize Handles (Active when not maximized) ── */}
+      {!isMaximized && (
+        <>
+          {/* Top-Left Corner Grip: Expand/Shrink both Width and Height */}
+          <div
+            onPointerDown={(e) => startResizing(e, 'corner')}
+            className="absolute top-0 left-0 w-6 h-6 z-50 cursor-nwse-resize flex items-center justify-center group touch-none"
+            title="Drag corner to resize chat window"
+          >
+            <div className="w-2.5 h-2.5 border-t-2 border-l-2 border-gray-400 group-hover:border-indigo-500 dark:border-slate-600 dark:group-hover:border-indigo-400 rounded-tl-xs group-hover:scale-125 transition-all" />
+          </div>
+
+          {/* Top Edge Handle: Resize Height */}
+          <div
+            onPointerDown={(e) => startResizing(e, 'top')}
+            className="absolute top-0 left-6 right-6 h-2 z-40 cursor-ns-resize hover:bg-indigo-500/15 transition-colors touch-none"
+            title="Drag top edge to resize height"
+          />
+
+          {/* Left Edge Handle: Resize Width */}
+          <div
+            onPointerDown={(e) => startResizing(e, 'left')}
+            className="absolute top-6 left-0 bottom-6 w-2 z-40 cursor-ew-resize hover:bg-indigo-500/15 transition-colors touch-none"
+            title="Drag left edge to resize width"
+          />
+        </>
+      )}
+
       {/* Sidebar for Chat History */}
       {sidebarOpen && (
-        <div className="w-1/3 bg-gray-50 border-r border-gray-200 flex flex-col">
-          <div className="p-3 border-b border-gray-200">
+        <div className="w-1/3 bg-gray-50 dark:bg-[#1e293b]/50 border-r border-gray-200 dark:border-slate-800 flex flex-col">
+          <div className="p-3 border-b border-gray-200 dark:border-slate-800">
             <button
               onClick={createNewChat}
-              className="w-full flex items-center justify-center gap-2 py-2 bg-blue-50 text-blue-600 rounded-xl hover:bg-blue-100 transition font-medium text-sm border border-blue-100"
+              className="w-full flex items-center justify-center gap-2 py-2 bg-blue-50 dark:bg-blue-950/40 text-blue-600 dark:text-blue-300 rounded-xl hover:bg-blue-100 dark:hover:bg-blue-900/60 transition font-medium text-sm border border-blue-100 dark:border-blue-900/60"
             >
               <Plus size={16} /> New Chat
             </button>
@@ -591,8 +729,8 @@ export default function ChatOverlay() {
                 className={cn(
                   "group flex items-center justify-between p-3 rounded-xl cursor-pointer transition text-sm",
                   currentConversationId === conv.id
-                    ? "bg-white border border-blue-200 shadow-sm text-blue-700"
-                    : "hover:bg-gray-100 text-gray-700 border border-transparent"
+                    ? "bg-white dark:bg-[#0f172a] border border-blue-200 dark:border-blue-800 shadow-sm text-blue-700 dark:text-blue-300"
+                    : "hover:bg-gray-100 dark:hover:bg-slate-800/60 text-gray-700 dark:text-slate-300 border border-transparent"
                 )}
               >
                 <div className="flex items-center gap-2 overflow-hidden flex-1">
@@ -603,7 +741,7 @@ export default function ChatOverlay() {
                 </div>
                 <button
                   onClick={(e) => deleteChat(e, conv.id)}
-                  className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition"
+                  className="opacity-0 group-hover:opacity-100 p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-lg transition"
                   title="Delete Chat"
                 >
                   <Trash2 size={14} />
@@ -615,16 +753,16 @@ export default function ChatOverlay() {
       )}
 
       {/* Main Chat Area */}
-      <div className="flex flex-col flex-1 bg-white">
+      <div className="flex flex-col flex-1 bg-white dark:bg-[#0f172a]">
         {/* Header */}
-        <div className="flex flex-col bg-gray-50 border-b border-gray-200">
-          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100">
-            <div className="flex items-center gap-2 text-sm font-bold text-gray-700">
+        <div className="flex flex-col bg-gray-50 dark:bg-[#1e293b]/70 border-b border-gray-200 dark:border-slate-800">
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-gray-100 dark:border-slate-800">
+            <div className="flex items-center gap-2 text-sm font-bold text-gray-700 dark:text-slate-200">
               <button
                 onClick={() => setSidebarOpen(!sidebarOpen)}
                 className={cn(
-                  "p-1.5 rounded-lg transition text-gray-400 hover:bg-gray-200 hover:text-gray-700",
-                  sidebarOpen && "bg-gray-200 text-gray-700"
+                  "p-1.5 rounded-lg transition text-gray-400 hover:bg-gray-200 dark:hover:bg-slate-800 hover:text-gray-700 dark:hover:text-slate-200",
+                  sidebarOpen && "bg-gray-200 dark:bg-slate-800 text-gray-700 dark:text-slate-200"
                 )}
                 title="Toggle Sidebar"
               >
@@ -633,20 +771,29 @@ export default function ChatOverlay() {
               <Sparkles size={15} className="text-blue-500 ml-1" />
               AI Assistant
             </div>
-            <button
-              onClick={() => setRightSidebarOpen(false)}
-              className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
-              title="Close"
-            >
-              <X size={16} />
-            </button>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => setIsMaximized((prev) => !prev)}
+                className="p-1.5 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 rounded-lg hover:bg-indigo-50 dark:hover:bg-slate-800 transition cursor-pointer"
+                title={isMaximized ? "Restore window size" : "Maximize chat window"}
+              >
+                {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+              </button>
+              <button
+                onClick={() => setRightSidebarOpen(false)}
+                className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
+                title="Close"
+              >
+                <X size={16} />
+              </button>
+            </div>
           </div>
 
-          <div className="flex items-center justify-between px-3 py-1.5 bg-white gap-2">
+          <div className="flex items-center justify-between px-3 py-1.5 bg-white dark:bg-[#0f172a] gap-2">
             <select
               value={selectedModel}
               onChange={(e) => setSelectedModel(e.target.value)}
-              className="text-xs border border-gray-200 rounded-lg px-2 py-1 outline-none focus:border-blue-400 text-gray-700 font-medium bg-gray-50 flex-1 min-w-0"
+              className="text-xs border border-gray-200 dark:border-slate-700 rounded-lg px-2 py-1 outline-none focus:border-blue-400 text-gray-700 dark:text-slate-200 font-medium bg-gray-50 dark:bg-slate-800 flex-1 min-w-0"
             >
               {models.length === 0 && <option value="">Loading models…</option>}
               {Object.keys(groupedModels).length > 0 ? (
@@ -711,13 +858,13 @@ export default function ChatOverlay() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#fdfdfd]">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#fdfdfd] dark:bg-[#090d16] transition-colors">
           {messages.length === 0 && (
             <div className="flex flex-col items-center justify-center h-full text-center gap-3 pb-8">
-              <div className="w-12 h-12 rounded-2xl bg-blue-50 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-2xl bg-blue-50 dark:bg-blue-950/40 flex items-center justify-center">
                 <Sparkles size={22} className="text-blue-400" />
               </div>
-              <p className="text-sm font-semibold text-gray-600">Ask me anything</p>
+              <p className="text-sm font-semibold text-gray-600 dark:text-slate-300">Ask me anything</p>
               <p className="text-xs text-gray-400 max-w-[260px]">
                 Use <span className="font-mono bg-gray-100 px-1 rounded">@</span> to cite memories from your canvas in the prompt.
               </p>
@@ -905,7 +1052,7 @@ export default function ChatOverlay() {
         </div>
 
         {/* Input area */}
-        <div className="bg-white border-t border-gray-200 p-3 relative">
+        <div className="bg-white dark:bg-[#0f172a] border-t border-gray-200 dark:border-slate-800 p-3 relative transition-colors">
           {/* ⚡ Floating Real-Time Context Suggestion Panel */}
           {suggestions.length > 0 && !showMention && !dismissed && (
             <div className="absolute bottom-full left-3 right-3 mb-2 bg-white/95 backdrop-blur-md border border-blue-200/90 rounded-2xl shadow-xl p-3 z-40 animate-in slide-in-from-bottom-2 duration-200">
@@ -1084,7 +1231,7 @@ export default function ChatOverlay() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 border border-gray-200 rounded-xl overflow-hidden bg-gray-50 focus-within:border-blue-400 focus-within:bg-white transition shadow-sm">
+          <div className="flex items-center gap-2 border border-gray-200 dark:border-slate-700 rounded-xl overflow-hidden bg-gray-50 dark:bg-slate-800/80 focus-within:border-blue-400 focus-within:bg-white dark:focus-within:bg-slate-900 transition shadow-sm">
             <input
               ref={inputRef}
               value={inputValue}
@@ -1096,7 +1243,7 @@ export default function ChatOverlay() {
                 }
                 if (e.key === 'Escape') setShowMention(false);
               }}
-              className="flex-1 bg-transparent px-3 py-2.5 text-sm outline-none text-gray-800"
+              className="flex-1 bg-transparent px-3 py-2.5 text-sm outline-none text-gray-800 dark:text-slate-100 placeholder:text-gray-400 dark:placeholder:text-slate-500"
               placeholder="Ask anything or use @ to cite a memory…"
               autoComplete="off"
               disabled={loading}
@@ -1104,7 +1251,7 @@ export default function ChatOverlay() {
             <button
               onClick={handleSend}
               disabled={!inputValue.trim() || loading}
-              className="mr-2 p-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 disabled:cursor-not-allowed text-white rounded-lg transition"
+              className="mr-2 p-2 bg-blue-500 hover:bg-blue-600 disabled:bg-gray-200 dark:disabled:bg-slate-800 disabled:text-gray-400 text-white rounded-lg transition"
               title="Send"
             >
               <Send size={15} />

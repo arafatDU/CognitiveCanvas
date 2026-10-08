@@ -53,36 +53,31 @@ export const ClusterLegend = memo(() => {
 
       {/* Cluster List */}
       {!collapsed && (
-        <div className="p-2 space-y-1.5 max-h-56 overflow-y-auto text-[11px]">
+        <div className="p-2 space-y-1 max-h-56 overflow-y-auto text-xs">
           {clusters.map((cl) => {
             const count = nodeCountByColor[cl.color] || 0;
             return (
               <div
                 key={cl.id}
-                className="flex items-start gap-2 p-1.5 rounded-lg hover:bg-gray-100/70 transition cursor-pointer group"
+                className="flex items-center justify-between gap-2 p-1.5 rounded-lg hover:bg-gray-100/70 transition cursor-pointer group"
                 onClick={() => {
                   // Find first node matching this color and highlight
                   const matchingNode = nodes.find((n) => n.data?.color === cl.color);
                   if (matchingNode) highlightNode(matchingNode.id);
                 }}
               >
-                <span
-                  className="w-3.5 h-3.5 rounded-md flex-shrink-0 mt-0.5 shadow-2xs border border-black/10 group-hover:scale-110 transition"
-                  style={{ backgroundColor: cl.color }}
-                />
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center justify-between">
-                    <span className="font-semibold text-gray-800 truncate">{cl.name}</span>
-                    {count > 0 && (
-                      <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.2 rounded-full">
-                        {count}
-                      </span>
-                    )}
-                  </div>
-                  <p className="text-[10px] text-gray-500 truncate leading-tight">
-                    {cl.keywords.join(', ')}
-                  </p>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span
+                    className="w-3.5 h-3.5 rounded-md flex-shrink-0 shadow-2xs border border-black/10 group-hover:scale-110 transition"
+                    style={{ backgroundColor: cl.color }}
+                  />
+                  <span className="font-semibold text-gray-800 text-[11px] truncate">{cl.name}</span>
                 </div>
+                {count > 0 && (
+                  <span className="text-[9px] font-bold text-gray-500 bg-gray-100 px-1.5 py-0.2 rounded-full flex-shrink-0">
+                    {count}
+                  </span>
+                )}
               </div>
             );
           })}

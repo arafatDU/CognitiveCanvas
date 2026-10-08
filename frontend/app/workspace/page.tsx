@@ -14,7 +14,10 @@ import AuthGuard from '@/components/auth/AuthGuard';
 import { useEffect, useRef, useState } from 'react';
 import { RefreshCw, Download } from 'lucide-react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import Image from 'next/image';
 import { memoriesApi, parseMemoletText } from '@/lib/api';
+import { ThemeToggle } from '@/components/Theme/ThemeToggle';
 
 function WorkspaceInner() {
   const router = useRouter();
@@ -106,20 +109,32 @@ function WorkspaceInner() {
   }, [clerkUser?.id, user?.id, user?.username]);
 
   return (
-    <main className="flex h-screen w-full bg-[#f1f5f9] overflow-hidden text-gray-900 antialiased relative">
+    <main className="flex h-screen w-full bg-[#f1f5f9] dark:bg-[#090d16] overflow-hidden text-gray-900 dark:text-slate-100 antialiased relative transition-colors duration-200">
       <LeftSidebar />
 
       <div className="flex-1 flex flex-col relative h-full min-w-0">
         {/* Toolbar */}
-        <div className="h-12 bg-white flex items-center justify-between px-6 border-b border-gray-200 shadow-sm z-10 flex-shrink-0 w-full">
+        <div className="h-12 bg-white dark:bg-[#0f172a] flex items-center justify-between px-6 border-b border-gray-200 dark:border-slate-800 shadow-sm z-10 flex-shrink-0 w-full transition-colors">
           <div className="flex items-center gap-4">
-            <span className="text-sm font-bold text-gray-800 tracking-tight select-none flex items-center gap-1.5">
-              🧠 Memolet
-            </span>
+            <Link href="/" className="flex items-center gap-2 select-none group" title="CognitiveCanvas Home">
+              <div className="relative w-6 h-6 rounded-md overflow-hidden flex-shrink-0 shadow-xs">
+                <Image
+                  src="/logo.png"
+                  alt="CognitiveCanvas Logo"
+                  width={24}
+                  height={24}
+                  className="w-full h-full object-contain"
+                  priority
+                />
+              </div>
+              <span className="text-sm font-black text-gray-800 dark:text-white tracking-tight group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition-colors">
+                CognitiveCanvas
+              </span>
+            </Link>
 
             <button
               onClick={() => setImportModalOpen(true)}
-              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 transition shadow-2xs cursor-pointer"
+              className="flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 bg-blue-50 dark:bg-blue-950/40 hover:bg-blue-100 dark:hover:bg-blue-900/60 text-blue-700 dark:text-blue-300 rounded-lg border border-blue-200 dark:border-blue-800 transition shadow-2xs cursor-pointer"
               title="Import conversation turns from ChatGPT, Gemini, or Claude"
             >
               <Download size={13} />
@@ -127,11 +142,12 @@ function WorkspaceInner() {
             </button>
           </div>
 
-          <div className="flex items-center gap-3 text-sm font-medium text-gray-600">
+          <div className="flex items-center gap-3 text-sm font-medium text-gray-600 dark:text-slate-300">
+            <ThemeToggle />
             <UserButton
               appearance={{
                 elements: {
-                  userButtonAvatarBox: 'w-7 h-7 border border-gray-200 shadow-sm',
+                  userButtonAvatarBox: 'w-7 h-7 border border-gray-200 dark:border-slate-700 shadow-sm',
                 },
               }}
             />
@@ -143,10 +159,10 @@ function WorkspaceInner() {
           {/* Canvas */}
           <div className="flex-1 h-full w-full relative">
             {loadingCanvas && (
-              <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 backdrop-blur-sm">
+              <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/60 dark:bg-[#090d16]/70 backdrop-blur-sm">
                 <div className="flex flex-col items-center gap-3">
                   <RefreshCw size={28} className="animate-spin text-blue-400" />
-                  <p className="text-sm text-gray-500 font-medium">Loading memories…</p>
+                  <p className="text-sm text-gray-500 dark:text-slate-400 font-medium">Loading memories…</p>
                 </div>
               </div>
             )}
