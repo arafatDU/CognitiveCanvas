@@ -36,16 +36,16 @@ function MemoryDocViewer({
   const tab = tabs[activeTab] ?? tabs[0];
 
   return (
-    <div className="w-[360px] flex-shrink-0 flex flex-col h-full bg-white border-l border-gray-200 shadow-sm overflow-hidden animate-in slide-in-from-right duration-200">
+    <div className="w-[360px] flex-shrink-0 flex flex-col h-full bg-white dark:bg-[#0f172a] border-l border-gray-200 dark:border-slate-800 shadow-sm overflow-hidden animate-in slide-in-from-right duration-200 transition-colors">
       {/* Panel header */}
-      <div className="flex items-center justify-between bg-gray-50 border-b border-gray-200 px-4 py-3">
-        <div className="font-semibold text-sm text-gray-700 flex items-center gap-2">
+      <div className="flex items-center justify-between bg-gray-50 dark:bg-[#161f30] border-b border-gray-200 dark:border-slate-800 px-4 py-3">
+        <div className="font-semibold text-sm text-gray-700 dark:text-slate-200 flex items-center gap-2">
           <FileText size={14} className="text-blue-500" />
           Document View
         </div>
         <button
           onClick={onClose}
-          className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition"
+          className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
           title="Close Doc Viewer"
         >
           <X size={15} />
@@ -54,19 +54,19 @@ function MemoryDocViewer({
 
       {/* Episode Overview for Multi-Pair Memolets */}
       {isMultiPair && parsed.summary && (
-        <div className="bg-indigo-50/70 border-b border-indigo-100 px-4 py-2.5 text-xs flex-shrink-0">
-          <div className="flex items-center gap-1.5 font-bold text-indigo-900 mb-0.5">
+        <div className="bg-indigo-50/70 dark:bg-indigo-950/40 border-b border-indigo-100 dark:border-indigo-900/60 px-4 py-2.5 text-xs flex-shrink-0">
+          <div className="flex items-center gap-1.5 font-bold text-indigo-900 dark:text-indigo-200 mb-0.5">
             <span>📚</span>
             <span>Session Episode Overview:</span>
           </div>
-          <p className="text-indigo-900 text-[11px] leading-relaxed line-clamp-3">
+          <p className="text-indigo-900 dark:text-indigo-300 text-[11px] leading-relaxed line-clamp-3">
             {parsed.summary}
           </p>
         </div>
       )}
 
       {/* Tabs (one per pair) */}
-      <div className="flex bg-[#f3f4f6] border-b border-gray-200 text-xs font-medium px-2 overflow-x-auto flex-shrink-0">
+      <div className="flex bg-[#f3f4f6] dark:bg-[#161f30]/80 border-b border-gray-200 dark:border-slate-800 text-xs font-medium px-2 overflow-x-auto flex-shrink-0">
         {tabs.map((t, i) => (
           <button
             key={i}
@@ -74,13 +74,13 @@ function MemoryDocViewer({
             className={cn(
               'py-2.5 px-4 whitespace-nowrap transition cursor-pointer',
               activeTab === i
-                ? 'text-blue-600 border-b-2 border-blue-600 bg-white'
-                : 'text-gray-500 hover:text-gray-700'
+                ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 bg-white dark:bg-[#0f172a]'
+                : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-200'
             )}
           >
             {t.label}
             {tabs.length > 1 && (
-              <span className="ml-1 text-[9px] text-gray-400">
+              <span className="ml-1 text-[9px] text-gray-400 dark:text-slate-500">
                 {i + 1}/{tabs.length}
               </span>
             )}
@@ -89,19 +89,19 @@ function MemoryDocViewer({
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] space-y-5">
+      <div className="flex-1 overflow-y-auto p-5 bg-[#fdfdfd] dark:bg-[#090d16] space-y-5 transition-colors">
         {memolet.is_deprecated && (
-          <div className="bg-amber-50 border border-amber-300 rounded-lg p-3 text-xs">
-            <div className="flex items-center gap-1.5 font-bold text-amber-900 mb-1">
-              <AlertTriangle size={13} className="text-amber-600 flex-shrink-0" />
+          <div className="bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-lg p-3 text-xs">
+            <div className="flex items-center gap-1.5 font-bold text-amber-900 dark:text-amber-300 mb-1">
+              <AlertTriangle size={13} className="text-amber-600 dark:text-amber-400 flex-shrink-0" />
               <span>Outdated Advice Detected</span>
             </div>
             {memolet.deprecation_reason && (
-              <p className="text-amber-800 text-[11px] leading-tight mb-1 font-medium">{memolet.deprecation_reason}</p>
+              <p className="text-amber-800 dark:text-amber-200 text-[11px] leading-tight mb-1 font-medium">{memolet.deprecation_reason}</p>
             )}
             {memolet.suggested_update && (
-              <p className="text-gray-700 text-[11px] leading-tight">
-                <span className="font-semibold text-amber-900">Modern: </span>{memolet.suggested_update}
+              <p className="text-gray-700 dark:text-slate-200 text-[11px] leading-tight">
+                <span className="font-semibold text-amber-900 dark:text-amber-300">Modern: </span>{memolet.suggested_update}
               </p>
             )}
           </div>
@@ -109,30 +109,30 @@ function MemoryDocViewer({
         {tab.isStructured ? (
           <>
             {tab.summary && (
-              <div className="bg-blue-50 border-l-4 border-blue-400 p-4 rounded-r-lg shadow-sm">
-                <h4 className="text-[10px] font-bold text-blue-800 mb-1 uppercase tracking-wider">
+              <div className="bg-blue-50 dark:bg-blue-950/30 border-l-4 border-blue-400 dark:border-blue-500 p-4 rounded-r-lg shadow-sm">
+                <h4 className="text-[10px] font-bold text-blue-800 dark:text-blue-300 mb-1 uppercase tracking-wider">
                   Summary
                 </h4>
-                <p className="text-sm text-blue-900 leading-relaxed">{tab.summary}</p>
+                <p className="text-sm text-blue-900 dark:text-blue-200 leading-relaxed">{tab.summary}</p>
               </div>
             )}
             {tab.user && (
               <div>
-                <h4 className="text-[10px] font-bold text-gray-400 mb-2 uppercase tracking-wider">
+                <h4 className="text-[10px] font-bold text-gray-400 dark:text-slate-500 mb-2 uppercase tracking-wider">
                   User
                 </h4>
-                <div className="bg-gray-100/80 p-4 rounded-xl text-sm text-gray-800 whitespace-pre-wrap">
+                <div className="bg-gray-100/80 dark:bg-[#1e293b] p-4 rounded-xl text-sm text-gray-800 dark:text-slate-200 whitespace-pre-wrap">
                   {tab.user}
                 </div>
               </div>
             )}
             {tab.ai && (
               <div>
-                <h4 className="text-[10px] font-bold text-blue-500 mb-2 uppercase tracking-wider flex items-center gap-2">
+                <h4 className="text-[10px] font-bold text-blue-500 dark:text-blue-400 mb-2 uppercase tracking-wider flex items-center gap-2">
                   <span className="w-2 h-2 rounded-full bg-blue-500" />
                   AI Response
                 </h4>
-                <div className="border border-gray-100 bg-white p-4 rounded-xl shadow-sm text-sm text-gray-800 whitespace-normal leading-relaxed prose prose-sm prose-blue max-w-none">
+                <div className="border border-gray-100 dark:border-slate-800 bg-white dark:bg-[#0f172a] p-4 rounded-xl shadow-sm text-sm text-gray-800 dark:text-slate-200 whitespace-normal leading-relaxed prose prose-sm prose-blue dark:prose-invert max-w-none">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
                     {tab.ai}
                   </ReactMarkdown>
@@ -141,22 +141,22 @@ function MemoryDocViewer({
             )}
           </>
         ) : (
-          <div className="text-sm text-gray-700 whitespace-pre-wrap leading-relaxed">
+          <div className="text-sm text-gray-700 dark:text-slate-300 whitespace-pre-wrap leading-relaxed">
             {tab.raw || memolet.text}
           </div>
         )}
       </div>
 
       {onDelete && (
-        <div className="p-3 bg-gray-50 border-t border-gray-200 flex items-center justify-between flex-shrink-0">
-          <span className="text-[10px] text-gray-400 font-mono">
+        <div className="p-3 bg-gray-50 dark:bg-[#161f30] border-t border-gray-200 dark:border-slate-800 flex items-center justify-between flex-shrink-0">
+          <span className="text-[10px] text-gray-400 dark:text-slate-500 font-mono">
             {memolet.id.substring(0, 8)}...
           </span>
           <button
             type="button"
             onClick={() => onDelete(memolet.id)}
             disabled={deleting}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 hover:text-white bg-red-50 hover:bg-red-600 border border-red-200 hover:border-red-600 rounded-lg transition-all cursor-pointer disabled:opacity-50"
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-red-600 dark:text-red-400 hover:text-white dark:hover:text-white bg-red-50 dark:bg-red-950/40 hover:bg-red-600 dark:hover:bg-red-600 border border-red-200 dark:border-red-800 hover:border-red-600 rounded-lg transition-all cursor-pointer disabled:opacity-50"
           >
             <Trash2 size={12} className={deleting ? 'animate-spin' : ''} />
             <span>{deleting ? 'Deleting...' : 'Delete Memory'}</span>
@@ -318,18 +318,18 @@ export default function GetMemoryOverlay() {
   if (!leftSidebarOpen) return null;
 
   return (
-    <div className="absolute inset-0 z-50 bg-white/40 backdrop-blur-sm flex justify-start">
-      <div className="w-[88vw] h-full bg-white shadow-2xl flex flex-col border-r border-gray-200 animate-in slide-in-from-left duration-300">
+    <div className="absolute inset-0 z-50 bg-black/30 dark:bg-black/60 backdrop-blur-sm flex justify-start">
+      <div className="w-[88vw] h-full bg-white dark:bg-[#0f172a] shadow-2xl flex flex-col border-r border-gray-200 dark:border-slate-800 animate-in slide-in-from-left duration-300 transition-colors">
 
         {/* ── Top Navbar ── */}
-        <div className="flex items-center gap-4 p-3 border-b border-gray-100 bg-gray-50 shadow-sm flex-shrink-0">
+        <div className="flex items-center gap-4 p-3 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-[#1e293b]/60 shadow-sm flex-shrink-0">
           {/* Search */}
-          <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-lg px-3 py-2 w-80 shadow-inner focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 transition">
+          <div className="flex items-center gap-2 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg px-3 py-2 w-80 shadow-inner focus-within:border-blue-400 focus-within:ring-2 focus-within:ring-blue-100 dark:focus-within:ring-blue-900 transition">
             <Search size={15} className={cn('text-gray-400', searching && 'animate-pulse text-blue-400')} />
             <input
               type="text"
               placeholder="GraphRAG search memories…"
-              className="flex-1 outline-none text-sm bg-transparent placeholder:text-gray-400 text-gray-800"
+              className="flex-1 outline-none text-sm bg-transparent placeholder:text-gray-400 dark:placeholder:text-slate-500 text-gray-800 dark:text-slate-100"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
@@ -342,22 +342,22 @@ export default function GetMemoryOverlay() {
           </div>
 
           {/* Controls */}
-          <div className="flex items-center gap-5 border-l border-gray-200 pl-4 text-sm text-gray-600 font-medium">
+          <div className="flex items-center gap-5 border-l border-gray-200 dark:border-slate-700 pl-4 text-sm text-gray-600 dark:text-slate-300 font-medium">
             <label className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Bins:</span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">Bins:</span>
               <input type="range" min="1" max="20" value={bins} onChange={(e) => setBins(Number(e.target.value))} className="w-20 accent-blue-500" />
-              <span className="w-5 text-blue-600 font-bold text-xs">{bins}</span>
+              <span className="w-5 text-blue-600 dark:text-blue-400 font-bold text-xs">{bins}</span>
             </label>
             <label className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">Clusters:</span>
+              <span className="text-xs text-gray-500 dark:text-slate-400">Clusters:</span>
               <input type="range" min="1" max="10" value={clusters} onChange={(e) => setClusters(Number(e.target.value))} className="w-20 accent-blue-500" />
-              <span className="w-5 text-blue-600 font-bold text-xs">{clusters}</span>
+              <span className="w-5 text-blue-600 dark:text-blue-400 font-bold text-xs">{clusters}</span>
             </label>
           </div>
 
           {/* Action buttons */}
           <div className="flex items-center gap-2 ml-auto">
-            <button className="px-3 py-1.5 bg-gray-100 hover:bg-gray-200 text-gray-700 font-semibold rounded-lg text-xs transition">
+            <button className="px-3 py-1.5 bg-gray-100 dark:bg-slate-800 hover:bg-gray-200 dark:hover:bg-slate-700 text-gray-700 dark:text-slate-200 font-semibold rounded-lg text-xs transition">
               Select All
             </button>
             <button className="px-3 py-1.5 bg-blue-500 hover:bg-blue-600 text-white font-semibold rounded-lg text-xs shadow-sm transition">
@@ -366,7 +366,7 @@ export default function GetMemoryOverlay() {
             {/* ── Close Memory Button (prominently in navbar) ── */}
             <button
               onClick={() => setLeftSidebarOpen(false)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 hover:bg-red-100 text-red-600 font-semibold rounded-lg text-xs border border-red-200 transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 dark:bg-red-950/40 hover:bg-red-100 dark:hover:bg-red-900/60 text-red-600 dark:text-red-400 font-semibold rounded-lg text-xs border border-red-200 dark:border-red-900/60 transition cursor-pointer"
             >
               <X size={13} />
               Close Memory
@@ -381,9 +381,9 @@ export default function GetMemoryOverlay() {
           <div className="flex-1 flex flex-col overflow-hidden">
 
             {/* Static Canvas Area */}
-            <div className="flex-1 relative bg-[#fafafa] overflow-hidden">
+            <div className="flex-1 relative bg-[#fafafa] dark:bg-[#0c121e] overflow-hidden transition-colors">
               <div
-                className="absolute inset-0 opacity-[0.04]"
+                className="absolute inset-0 opacity-[0.04] dark:opacity-[0.1]"
                 style={{
                   backgroundImage:
                     'linear-gradient(#000 1px, transparent 1px), linear-gradient(90deg, #000 1px, transparent 1px)',
@@ -394,10 +394,10 @@ export default function GetMemoryOverlay() {
               {loading ? (
                 <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
                   <Database className="w-8 h-8 text-blue-400 animate-pulse" />
-                  <p className="text-sm font-semibold text-gray-400 tracking-wider">Syncing Database…</p>
+                  <p className="text-sm font-semibold text-gray-400 dark:text-slate-400 tracking-wider">Syncing Database…</p>
                 </div>
               ) : displayMemories.length === 0 ? (
-                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-400">
+                <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-gray-400 dark:text-slate-500">
                   <Database size={32} className="opacity-30" />
                   <p className="text-sm font-semibold">
                     {searchQuery ? `No results for "${searchQuery}"` : 'No memories found.'}
@@ -423,25 +423,25 @@ export default function GetMemoryOverlay() {
                           className={cn(
                             'absolute p-3 rounded-xl border shadow-sm cursor-pointer transition-all hover:scale-105 hover:shadow-md overflow-hidden flex flex-col gap-1 w-40 h-28',
                             isSelected
-                              ? 'bg-blue-100 border-blue-500 shadow-blue-200 scale-105'
+                              ? 'bg-blue-100 dark:bg-blue-950/90 border-blue-500 shadow-blue-200 dark:shadow-blue-950 scale-105'
                               : isActive
-                              ? 'bg-blue-50 border-blue-400 shadow-blue-100'
-                              : 'bg-white border-gray-200 hover:border-blue-400'
+                              ? 'bg-blue-50 dark:bg-blue-950/60 border-blue-400 dark:border-blue-700 shadow-blue-100 dark:shadow-blue-950/40'
+                              : 'bg-white dark:bg-[#161f30] border-gray-200 dark:border-slate-800 hover:border-blue-400 dark:hover:border-blue-500'
                           )}
                           style={{ left: x, top: y, borderLeftColor: m.color || undefined, borderLeftWidth: 3 }}
                         >
                           <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-mono font-bold text-gray-500">
+                            <span className="text-[10px] font-mono font-bold text-gray-500 dark:text-slate-400">
                               {nodes.find((n) => n.id === m.id)?.data.displayId ?? m.displayId ?? `#${m.id.substring(0, 6)}`}
                             </span>
                             <div className="flex items-center gap-1">
                               {m.text?.includes('---PAIR---') && (
-                                <span className="text-[9px] font-bold text-blue-700 bg-blue-100 border border-blue-200 px-1 rounded">
+                                <span className="text-[9px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-800 px-1 rounded">
                                   {splitIntoPairs(m.text).length} Pairs
                                 </span>
                               )}
                               {m.is_deprecated && (
-                                <span className="text-[9px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1 rounded" title={m.deprecation_reason || "Outdated advice"}>
+                                <span className="text-[9px] font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-800 px-1 rounded" title={m.deprecation_reason || "Outdated advice"}>
                                   ⚠️
                                 </span>
                               )}
@@ -450,11 +450,11 @@ export default function GetMemoryOverlay() {
                             </div>
                           </div>
                           {parsed.summary ? (
-                            <p className="text-[10px] font-medium text-gray-600 leading-tight line-clamp-3">
+                            <p className="text-[10px] font-medium text-gray-600 dark:text-slate-300 leading-tight line-clamp-3">
                               {parsed.summary}
                             </p>
                           ) : (
-                            <p className="text-[10px] font-medium text-gray-600 leading-tight line-clamp-3">
+                            <p className="text-[10px] font-medium text-gray-600 dark:text-slate-300 leading-tight line-clamp-3">
                               {m.keywords?.join(', ') || m.text}
                             </p>
                           )}
@@ -467,17 +467,17 @@ export default function GetMemoryOverlay() {
             </div>
 
             {/* Retrieved Sentences Sub-panel */}
-            <div className="h-56 border-t border-gray-200 bg-white flex flex-col flex-shrink-0">
-              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50">
-                <h3 className="text-xs font-bold text-gray-700">
+            <div className="h-56 border-t border-gray-200 dark:border-slate-800 bg-white dark:bg-[#0f172a] flex flex-col flex-shrink-0 transition-colors">
+              <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 dark:border-slate-800 bg-gray-50 dark:bg-[#161f30]">
+                <h3 className="text-xs font-bold text-gray-700 dark:text-slate-200">
                   Retrieved Memories ({displayMemories.length})
                   {searching && <span className="ml-2 text-blue-400 font-normal">Searching…</span>}
                 </h3>
               </div>
               <div className="overflow-y-auto flex-1 p-3 space-y-2">
                 {displayMemories.length === 0 ? (
-                  <div className="h-full flex flex-col items-center justify-center p-4 text-center text-gray-400">
-                    <Database size={22} className="mb-2 text-gray-300" />
+                  <div className="h-full flex flex-col items-center justify-center p-4 text-center text-gray-400 dark:text-slate-500">
+                    <Database size={22} className="mb-2 text-gray-300 dark:text-slate-600" />
                     <p className="text-xs font-medium">
                       {searchQuery ? `No memories matching "${searchQuery}"` : 'No memories found in database'}
                     </p>
@@ -499,7 +499,7 @@ export default function GetMemoryOverlay() {
                     return (
                       <div
                         key={m.id}
-                        className="group flex flex-col gap-1.5 p-3 rounded-lg border border-transparent hover:border-gray-200 hover:bg-gray-50 transition"
+                        className="group flex flex-col gap-1.5 p-3 rounded-lg border border-transparent hover:border-gray-200 dark:hover:border-slate-700 hover:bg-gray-50 dark:hover:bg-slate-800/60 transition"
                       >
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-1.5">
@@ -507,12 +507,12 @@ export default function GetMemoryOverlay() {
                               {badgeText}
                             </span>
                             {m.text?.includes('---PAIR---') && (
-                              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-800 bg-blue-100 border border-blue-200 px-1.5 py-0.5 rounded">
+                              <span className="inline-flex items-center gap-0.5 text-[9px] font-bold text-blue-800 dark:text-blue-300 bg-blue-100 dark:bg-blue-950/80 border border-blue-200 dark:border-blue-800 px-1.5 py-0.5 rounded">
                                 📚 {splitIntoPairs(m.text).length} Pairs
                               </span>
                             )}
                             {m.is_deprecated && (
-                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 bg-amber-100 border border-amber-300 px-1.5 py-0.5 rounded-full" title={m.deprecation_reason || "Outdated advice"}>
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-800 dark:text-amber-300 bg-amber-100 dark:bg-amber-950/80 border border-amber-300 dark:border-amber-800 px-1.5 py-0.5 rounded-full" title={m.deprecation_reason || "Outdated advice"}>
                                 <AlertTriangle size={10} />
                                 Stale
                               </span>
@@ -525,8 +525,8 @@ export default function GetMemoryOverlay() {
                               className={cn(
                                 "text-[11px] font-semibold transition cursor-pointer",
                                 nodes.some((n) => n.id === m.id)
-                                  ? "text-emerald-600"
-                                  : "text-blue-600 hover:text-blue-700 opacity-0 group-hover:opacity-100"
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : "text-blue-600 dark:text-blue-400 hover:text-blue-700 opacity-0 group-hover:opacity-100"
                               )}
                             >
                               {nodes.some((n) => n.id === m.id) ? '✓ Added' : '+ Add to Canvas'}
@@ -538,7 +538,7 @@ export default function GetMemoryOverlay() {
                                 handleDeleteMemory(m.id);
                               }}
                               disabled={deletingId === m.id}
-                              className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 rounded opacity-0 group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
+                              className="p-1 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded opacity-0 group-hover:opacity-100 transition cursor-pointer disabled:opacity-50"
                               title="Permanently delete from database & GraphRAG"
                             >
                               <Trash2 size={13} className={deletingId === m.id ? 'animate-spin' : ''} />
@@ -546,9 +546,9 @@ export default function GetMemoryOverlay() {
                           </div>
                         </div>
                         {parsed.summary && (
-                          <p className="text-xs text-gray-700 font-medium line-clamp-2">{parsed.summary}</p>
+                          <p className="text-xs text-gray-700 dark:text-slate-200 font-medium line-clamp-2">{parsed.summary}</p>
                         )}
-                        <p className="text-[11px] text-gray-500">
+                        <p className="text-[11px] text-gray-500 dark:text-slate-400">
                           [{m.keywords?.map((k) => `'${k}'`).join(', ')}]
                         </p>
                       </div>
@@ -575,7 +575,7 @@ export default function GetMemoryOverlay() {
       <div className="absolute right-0 top-1/2 -translate-y-1/2" style={{ left: '88vw' }}>
         <button
           onClick={() => setLeftSidebarOpen(false)}
-          className="flex flex-col items-center gap-2 py-6 px-1.5 bg-white border border-gray-200 border-l-0 rounded-r-xl shadow-md text-gray-400 hover:text-red-500 transition hover:pl-2 hover:bg-red-50"
+          className="flex flex-col items-center gap-2 py-6 px-1.5 bg-white dark:bg-[#0f172a] border border-gray-200 dark:border-slate-800 border-l-0 rounded-r-xl shadow-md text-gray-400 dark:text-slate-400 hover:text-red-500 hover:pl-2 hover:bg-red-50 dark:hover:bg-red-950/40 transition cursor-pointer"
         >
           <X size={14} className="mb-2" />
           <span className="[writing-mode:vertical-rl] text-[10px] font-bold tracking-widest uppercase">

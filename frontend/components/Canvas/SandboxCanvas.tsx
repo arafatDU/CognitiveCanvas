@@ -22,6 +22,7 @@ import { ClusterLegend } from './ClusterLegend';
 import { getNextDisplayId, parseMemoletText } from '@/lib/api';
 import { Trash2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { useTheme } from '@/components/Theme/ThemeProvider';
 
 const NODE_TYPES: NodeTypes = {
   memolet: MemoletNodeComponent,
@@ -33,6 +34,7 @@ const EDGE_TYPES: EdgeTypes = {
 };
 
 export default function SandboxCanvas() {
+  const { theme } = useTheme();
   const {
     nodes,
     edges,
@@ -157,7 +159,7 @@ export default function SandboxCanvas() {
 
   return (
     <div
-      className="flex-grow h-full w-full relative"
+      className="flex-grow h-full w-full relative bg-[#f8fafc] transition-colors"
       ref={reactFlowWrapper}
       onDragOver={onDragOver}
       onDrop={onDrop}
@@ -182,7 +184,12 @@ export default function SandboxCanvas() {
         snapToGrid={true}
         snapGrid={[160, 160]}
       >
-        <Background gap={160} size={1} color="#cbd5e1" variant={BackgroundVariant.Lines} />
+        <Background
+          gap={160}
+          size={1}
+          color="#cbd5e1"
+          variant={BackgroundVariant.Lines}
+        />
         <VoronoiBackground />
         <Controls showInteractive={false} />
         <MiniMap

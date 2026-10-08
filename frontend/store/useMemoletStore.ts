@@ -114,10 +114,10 @@ interface MemoletState {
 }
 
 const DEFAULT_CLUSTERS: CanvasCluster[] = [
-  { id: 'c1', name: 'Core Architecture', color: '#bbf7d0', keywords: ['FastAPI', 'database', 'backend', 'stream'] },
-  { id: 'c2', name: 'Knowledge & AI', color: '#fef08a', keywords: ['GraphRAG', 'Neo4j', 'vector', 'retrieval'] },
-  { id: 'c3', name: 'State & Security', color: '#bfdbfe', keywords: ['auth', 'session', 'token', 'jwt'] },
-  { id: 'c4', name: 'Tasks & Integration', color: '#fed7aa', keywords: ['celery', 'redis', 'queue', 'import'] },
+  { id: 'c1', name: 'Core Architecture', color: '#bbf7d0', keywords: ['system', 'foundation', 'structure', 'core'] },
+  { id: 'c2', name: 'Knowledge & Concepts', color: '#fef08a', keywords: ['context', 'insights', 'reasoning', 'memory'] },
+  { id: 'c3', name: 'State & Logic', color: '#bfdbfe', keywords: ['rules', 'workflow', 'conditions', 'policy'] },
+  { id: 'c4', name: 'Tasks & Integration', color: '#fed7aa', keywords: ['execution', 'action', 'pipeline', 'coordination'] },
 ];
 
 export const useMemoletStore = create<MemoletState>((set, get) => ({
