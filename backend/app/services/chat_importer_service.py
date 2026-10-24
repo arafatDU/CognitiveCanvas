@@ -517,11 +517,24 @@ class ChatImporterService:
 
                     saved_memolets.append({
                         "id": str(db_memolet.id),
+                        "text": db_memolet.text,
                         "summary": summary,
+                        "keywords": keywords,
                         "color": assigned_color,
                         "is_time_sensitive": db_memolet.is_time_sensitive,
+                        "deprecation_risk": db_memolet.deprecation_risk,
+                        "temporal_anchor": db_memolet.temporal_anchor,
+                        "validity_horizon_days": db_memolet.validity_horizon_days,
                         "is_deprecated": db_memolet.is_deprecated,
+                        "deprecation_reason": db_memolet.deprecation_reason,
+                        "suggested_update": db_memolet.suggested_update,
                     })
+
+            try:
+                from app.api.routes.memories import invalidate_user_memolets_cache
+                invalidate_user_memolets_cache(str(current_user.id))
+            except Exception:
+                pass
 
         return {
             "conversation_id": conversation_id,

@@ -305,8 +305,8 @@ export const memoriesApi = {
   getAll: () =>
     apiFetch<MemoletDTO[]>('/memories/'),
   /** GraphRAG search — returns ranked matching memolets */
-  search: (query: string) =>
-    apiFetch<MemoletDTO[]>(`/memories/search?query=${encodeURIComponent(query)}`),
+  search: (query: string, signal?: AbortSignal) =>
+    apiFetch<MemoletDTO[]>(`/memories/search?query=${encodeURIComponent(query)}`, { signal }),
   /** Permanently delete a memory from PostgreSQL and Neo4j */
   delete: (id: string) =>
     apiFetch<{ status: string; id: string; message: string }>(`/memories/${id}`, {
@@ -517,7 +517,20 @@ export interface CommitImportResponse {
   title?: string;
   total_turns: number;
   saved_memolets_count: number;
-  saved_memolets: Array<{ id: string; summary: string; color: string }>;
+  saved_memolets: Array<{
+    id: string;
+    text?: string;
+    summary?: string;
+    keywords?: string[];
+    color?: string;
+    is_time_sensitive?: boolean;
+    deprecation_risk?: string;
+    temporal_anchor?: string;
+    validity_horizon_days?: number;
+    is_deprecated?: boolean;
+    deprecation_reason?: string;
+    suggested_update?: string;
+  }>;
 }
 
 export const importApi = {

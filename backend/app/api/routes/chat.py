@@ -460,6 +460,12 @@ def save_chat_to_memory(
         except Exception as e:
             logger.warning(f"Neo4j update failed for memolet {db_memolet.id}: {e}")
 
+        try:
+            from app.api.routes.memories import invalidate_user_memolets_cache
+            invalidate_user_memolets_cache(str(current_user.id))
+        except Exception:
+            pass
+
         processed = [{
             "id": str(db_memolet.id),
             "summary": overarching_summary,

@@ -6,9 +6,20 @@ class RetrievalService:
     def __init__(self):
         # We will load embedding models lazily or globally
         self.encoder = SentenceTransformer("all-MiniLM-L6-v2")
+        self._query_cache: dict[str, np.ndarray] = {}
 
     def encode_text(self, text: str) -> list[float]:
         return self.encoder.encode(text).tolist()
+
+    def encode_query(self, query: str) -> np.ndarray:
+        q = query.strip().lower()
+        if q in self._query_cache:
+            return self._query_cache[q]
+        emb = np.array(self.encoder.encode(query), dtype=np.float32)
+        if len(self._query_cache) >= 1000:
+            self._query_cache.clear()
+        self._query_cache[q] = emb
+        return emb
 
     def hybrid_search(self, query: str, document_texts: list[str], document_embeddings: np.ndarray, alpha: float = 0.5):
         """
@@ -22,11 +33,12 @@ class RetrievalService:
         tokenized_query = query.split(" ")
         bm25_scores = bm25.get_scores(tokenized_query)
 
-        query_emb = self.encoder.encode(query)
+        query_emb = self.encode_query(query)
         # Cosine similarity for vectors if document_embeddings present
         # Assuming normalized embeddings -> dot product
         if document_embeddings is not None and len(document_embeddings) > 0:
-            vector_scores = np.dot(document_embeddings, query_emb)
+            doc_embs = np.array(document_embeddings, dtype=np.float32)
+            vector_scores = np.dot(doc_embs, query_emb)
             
             # Min-Max Normalization
             if np.max(bm25_scores) > 0:

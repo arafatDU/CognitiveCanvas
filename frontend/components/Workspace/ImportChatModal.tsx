@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMemoletStore } from '@/store/useMemoletStore';
-import { importApi, TurnPairDTO } from '@/lib/api';
+import { importApi, TurnPairDTO, getNextDisplayId, parseMemoletText } from '@/lib/api';
 import { 
   X, 
   Link as LinkIcon, 
@@ -23,7 +23,14 @@ export default function ImportChatModal({
 }: {
   onConversationImported?: (conversationId: string) => void;
 }) {
-  const { importModalOpen, setImportModalOpen, setRightSidebarOpen, setMemoriesNeedsSync } = useMemoletStore();
+  const { 
+    importModalOpen, 
+    setImportModalOpen, 
+    setRightSidebarOpen, 
+    setMemoriesNeedsSync,
+    nodes,
+    setNodes,
+  } = useMemoletStore();
 
   const [activeTab, setActiveTab] = useState<'link' | 'paste'>('link');
   const [urlInput, setUrlInput] = useState('');
@@ -124,8 +131,60 @@ export default function ImportChatModal({
       setImportSuccess(`Successfully imported ${res.total_turns} conversation turn(s)!`);
       setMemoriesNeedsSync(true);
 
+      // If user selected to save to memory (either alone or with continue chat), add to canvas with dynamic displayId
+      if (saveToMemory && res.saved_memolets && res.saved_memolets.length > 0) {
+        let currentNodes = [...nodes];
+        const baseOffset = currentNodes.length;
+
+        res.saved_memolets.forEach((memolet, index) => {
+          if (currentNodes.some((n) => n.id === memolet.id)) return;
+
+          // Dynamically compute the next display ID based on current nodes on canvas (e.g., 3 existing nodes -> "1_3")
+          const displayId = getNextDisplayId(currentNodes);
+          const parsed = parseMemoletText(memolet.text || '');
+          const summaryText = memolet.summary || parsed.summary || (memolet.text ? memolet.text.slice(0, 120) : 'Imported conversation memory');
+
+          // Position cleanly on the canvas
+          const col = (baseOffset + index) % 4;
+          const row = Math.floor((baseOffset + index) / 4);
+          const posX = 120 + col * 200;
+          const posY = 100 + row * 190;
+
+          const newNode = {
+            id: memolet.id,
+            type: 'memolet' as const,
+            position: {
+              x: posX,
+              y: posY,
+            },
+            data: {
+              text: memolet.text || '',
+              keywords: memolet.keywords || [],
+              color: memolet.color || '#e0f2fe',
+              weight: 1,
+              summary: summaryText,
+              displayId: displayId,
+              isTimeSensitive: memolet.is_time_sensitive,
+              deprecationRisk: memolet.deprecation_risk,
+              temporalAnchor: memolet.temporal_anchor,
+              validityHorizonDays: memolet.validity_horizon_days,
+              isDeprecated: memolet.is_deprecated,
+              deprecationReason: memolet.deprecation_reason,
+              suggestedUpdate: memolet.suggested_update,
+            },
+            style: { width: 160, height: 160 },
+          };
+
+          currentNodes.push(newNode as any);
+        });
+
+        if (currentNodes.length > nodes.length) {
+          setNodes(currentNodes);
+        }
+      }
+
       // If user selected to create a chat thread, trigger continuation
-      if (res.conversation_id) {
+      if (createConversation && res.conversation_id) {
         if (onConversationImported) {
           onConversationImported(res.conversation_id);
         }

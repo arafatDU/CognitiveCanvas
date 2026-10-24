@@ -1,4 +1,5 @@
 import logging
+import time
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -7,7 +8,7 @@ from typing import List, Optional
 from app.api import deps
 from app.db.session import get_db
 from app.db.neo4j import neo4j_connector
-from app.models.memolet import Memolet as MemoletModel, User
+from app.models.memolet import Memolet as MemoletModel, User, Conversation
 from app.schemas.memolet import Memolet, MemoletCreate
 
 from app.services.retrieval import retrieval_service
@@ -65,16 +66,41 @@ DEMO_PAIRS = [
 ]
 
 
+# In-memory user memolets cache for fast repeated searches
+_USER_MEMOLETS_CACHE: dict[str, tuple[float, list[MemoletModel]]] = {}
+CACHE_TTL_SECONDS = 60.0
+
+
+def get_cached_user_memolets(db: Session, user_id: str) -> list[MemoletModel]:
+    now = time.time()
+    if user_id in _USER_MEMOLETS_CACHE:
+        ts, mems = _USER_MEMOLETS_CACHE[user_id]
+        if now - ts < CACHE_TTL_SECONDS:
+            return mems
+
+    import uuid
+    uid = uuid.UUID(user_id) if isinstance(user_id, str) else user_id
+    mems = db.query(MemoletModel).filter(
+        (MemoletModel.user_id == uid) |
+        (MemoletModel.conversation_id.in_(
+            db.query(Conversation.id).filter(Conversation.user_id == uid)
+        ))
+    ).order_by(MemoletModel.created_at.asc()).all()
+    _USER_MEMOLETS_CACHE[user_id] = (now, mems)
+    return mems
+
+
+def invalidate_user_memolets_cache(user_id: str):
+    _USER_MEMOLETS_CACHE.pop(str(user_id), None)
+
+
 @router.get("/", response_model=List[Memolet])
 def get_memories(
     db: Session = Depends(get_db),
     current_user: User = Depends(deps.get_current_user),
 ):
     """Fetch all memolets belonging to the current user ordered by creation time."""
-    memolets = db.query(MemoletModel).filter(
-        (MemoletModel.user_id == current_user.id) |
-        (MemoletModel.conversation.has(user_id=current_user.id))
-    ).order_by(MemoletModel.created_at.asc()).all()
+    memolets = get_cached_user_memolets(db, str(current_user.id))
     return memolets
 
 
@@ -129,7 +155,34 @@ def seed_demo_memories(
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Seed failed: {str(e)}")
 
+    invalidate_user_memolets_cache(str(current_user.id))
     return {"message": f"Seeded {len(created)} demo memolets for user.", "created": created}
+
+
+STOPWORDS = {
+    "a", "about", "above", "after", "again", "against", "all", "am", "an", "and", "any", "are",
+    "aren't", "as", "at", "be", "because", "been", "before", "being", "below", "between", "both",
+    "but", "by", "can", "can't", "cannot", "could", "couldn't", "did", "didn't", "do", "does",
+    "doesn't", "doing", "don't", "down", "during", "each", "few", "for", "from", "further", "had",
+    "hadn't", "has", "hasn't", "have", "haven't", "having", "he", "he'd", "he'll", "he's", "her",
+    "here", "here's", "hers", "herself", "him", "himself", "his", "how", "how's", "i", "i'd",
+    "i'll", "i'm", "i've", "if", "in", "into", "is", "isn't", "it", "it's", "its", "itself",
+    "let's", "me", "more", "most", "mustn't", "my", "myself", "no", "nor", "not", "of", "off",
+    "on", "once", "only", "or", "other", "ought", "our", "ours", "ourselves", "out", "over",
+    "own", "same", "shan't", "she", "she'd", "she'll", "she's", "should", "shouldn't", "so",
+    "some", "such", "than", "that", "that's", "the", "their", "theirs", "them", "themselves",
+    "then", "there", "there's", "these", "they", "they'd", "they'll", "they're", "they've",
+    "this", "those", "through", "to", "too", "under", "until", "up", "very", "was", "wasn't",
+    "we", "we'd", "we'll", "we're", "we've", "were", "weren't", "what", "what's", "when",
+    "when's", "where", "where's", "which", "while", "who", "who's", "whom", "why", "why's",
+    "with", "won't", "would", "wouldn't", "you", "you'd", "you'll", "you're", "you've",
+    "your", "yours", "yourself", "yourselves", "tell", "give", "show", "explain", "please"
+}
+
+
+def extract_meaningful_keywords(query: str) -> list[str]:
+    tokens = [w.lower().strip(".,;:?!\"'`()[]{}#*-_/") for w in query.split()]
+    return [t for t in tokens if len(t) >= 2 and t not in STOPWORDS]
 
 
 @router.get("/search", response_model=List[Memolet])
@@ -140,88 +193,104 @@ def search_memories(
 ):
     """
     GraphRAG-augmented hybrid search strictly scoped to the current user:
-    1. Extract keywords from query text (including 2+ character terms like SQL, RAG, API)
-    2. Retrieve related memolet IDs from Neo4j concept graph (filtered to user)
-    3. Direct text and keyword substring matches
-    4. Vector similarity search on user's memolets
-    5. Return ranked matching results
+    1. Extract meaningful keywords from query (excluding stopwords)
+    2. Retrieve related memolet IDs and concept hits from Neo4j
+    3. Direct phrase and keyword overlap scoring
+    4. Fast cached vector similarity search
+    5. Rank strictly by composite relevance score and return top results
     """
     cleaned_query = query.strip()
     if not cleaned_query:
         return []
 
-    all_memolets = db.query(MemoletModel).filter(
-        (MemoletModel.user_id == current_user.id) |
-        (MemoletModel.conversation.has(user_id=current_user.id))
-    ).all()
+    all_memolets = get_cached_user_memolets(db, str(current_user.id))
     if not all_memolets:
         return []
 
-    # --- Step 1: GraphRAG — keyword-based graph traversal for current user ---
-    graph_memolet_ids: set[str] = set()
-    query_keywords = [w.lower().strip(".,;:?!\"'`()") for w in cleaned_query.split() if len(w) >= 2]
 
-    try:
-        with neo4j_connector.get_session() as neo4j_session:
-            graph_results = graphrag_service.retrieve_context_subgraph(
-                neo4j_session, query_keywords, user_id=str(current_user.id)
-            )
-            for r in graph_results:
-                if r.get("memolet_id"):
-                    graph_memolet_ids.add(r["memolet_id"])
-    except Exception as e:
-        logger.warning(f"GraphRAG search failed (continuing with vector only): {e}")
-
-    # --- Step 2: Direct text and keyword matching boost ---
+    meaningful_keywords = extract_meaningful_keywords(cleaned_query)
     q_lower = cleaned_query.lower()
-    text_match_ids: list[str] = []
-    for m in all_memolets:
-        m_text = (m.text or "").lower()
-        m_kw = [k.lower() for k in (m.keywords or [])]
-        if q_lower in m_text or any(kw in q_lower or q_lower in kw for kw in m_kw):
-            text_match_ids.append(str(m.id))
-        elif any(qw in m_text for qw in query_keywords if len(qw) >= 3):
-            text_match_ids.append(str(m.id))
 
-    # --- Step 3: Vector similarity search on user's memolets ---
-    texts = [m.text for m in all_memolets]
-    embeddings = [m.embedding for m in all_memolets]
+    # --- Step 1: GraphRAG — keyword-based graph traversal for current user ---
+    graph_concept_matches: dict[str, list[str]] = {}
+    if meaningful_keywords:
+        try:
+            with neo4j_connector.get_session() as neo4j_session:
+                graph_results = graphrag_service.retrieve_context_subgraph(
+                    neo4j_session, meaningful_keywords, user_id=str(current_user.id)
+                )
+                for r in graph_results:
+                    mid = r.get("memolet_id")
+                    if mid:
+                        graph_concept_matches[str(mid)] = r.get("concepts", [])
+        except Exception as e:
+            logger.warning(f"GraphRAG search failed: {e}")
 
-    scored_ids: list[str] = []
+    # --- Step 2: Vector embedding of query ---
+    query_emb = None
     try:
-        import numpy as np
-
-        scored_texts = [(m, t, e) for m, t, e in zip(all_memolets, texts, embeddings) if e is not None]
-        if scored_texts:
-            mems, txts, embs = zip(*scored_texts)
-            scores = retrieval_service.hybrid_search(
-                query=cleaned_query,
-                document_texts=list(txts),
-                document_embeddings=list(embs),
-            )
-            top_indices = np.argsort(scores)[-10:][::-1]
-            scored_ids = [str(mems[i].id) for i in top_indices if scores[i] > 0.05]
+        query_emb = retrieval_service.encode_query(cleaned_query)
     except Exception as e:
-        logger.warning(f"Vector search failed: {e}")
+        logger.warning(f"Query embedding failed: {e}")
 
-    # --- Step 4: Merge results (Text matches & Graph hits first, then vector) ---
-    allowed_user_ids = {str(m.id) for m in all_memolets}
-    merged_ids: list[str] = []
-    
-    # Priority: text matches + graph hits + vector hits
-    for mid in text_match_ids + list(graph_memolet_ids) + scored_ids:
-        if mid in allowed_user_ids and mid not in merged_ids:
-            merged_ids.append(mid)
+    # --- Step 3: Composite scoring for all user memolets ---
+    import numpy as np
 
-    if not merged_ids:
-        return []
+    scored_memolets: list[tuple[float, MemoletModel]] = []
+    has_meaningful_kws = len(meaningful_keywords) > 0
 
-    # Return ordered results
-    id_order = {mid: i for i, mid in enumerate(merged_ids)}
-    result_memolets = [m for m in all_memolets if str(m.id) in id_order]
-    result_memolets.sort(key=lambda m: id_order.get(str(m.id), 999))
+    for m in all_memolets:
+        score = 0.0
+        m_text = (m.text or "").lower()
+        m_kws = [k.lower() for k in (m.keywords or [])]
+        m_id_str = str(m.id)
 
-    return result_memolets[:12]
+        # 3a. Exact phrase match in text or keywords
+        if q_lower in m_text:
+            score += 3.5
+        for k in m_kws:
+            if q_lower == k:
+                score += 3.5
+            elif q_lower in k or k in q_lower:
+                score += 2.5
+
+        # 3b. Meaningful keyword overlap
+        if has_meaningful_kws:
+            matched_kws = [
+                w for w in meaningful_keywords
+                if any(w in k or k in w for k in m_kws) or w in m_text
+            ]
+            if matched_kws:
+                score += 3.5 * (len(matched_kws) / len(meaningful_keywords))
+                exact_tag_matches = sum(1 for w in meaningful_keywords if any(w == k for k in m_kws))
+                score += 1.5 * exact_tag_matches
+
+        # 3c. GraphRAG concept match
+        if m_id_str in graph_concept_matches:
+            matched_concepts = graph_concept_matches[m_id_str]
+            score += 2.0 * (min(len(matched_concepts), 3) / 3.0)
+
+        # 3d. Semantic vector similarity
+        if query_emb is not None and m.embedding is not None and len(m.embedding) > 0:
+            try:
+                m_emb = np.array(m.embedding, dtype=np.float32)
+                cos_sim = float(np.dot(m_emb, query_emb) / (np.linalg.norm(m_emb) * np.linalg.norm(query_emb) + 1e-9))
+                if cos_sim > 0.20:
+                    score += 2.5 * cos_sim
+            except Exception:
+                pass
+
+        # Threshold: if query had meaningful keywords, require positive relevance
+        threshold = 0.55 if has_meaningful_kws else 0.8
+        if score >= threshold:
+            scored_memolets.append((score, m))
+
+    # Sort descending by score
+    scored_memolets.sort(key=lambda x: x[0], reverse=True)
+
+    # Return top 12 results
+    return [m for _, m in scored_memolets[:12]]
+
 
 
 @router.delete("/{memolet_id}")
@@ -256,6 +325,8 @@ def delete_memory(
     # 2. Remove from PostgreSQL
     db.delete(db_memolet)
     db.commit()
+
+    invalidate_user_memolets_cache(str(current_user.id))
 
     return {"status": "success", "id": str(valid_id), "message": "Memory deleted successfully"}
 
@@ -350,5 +421,6 @@ def extract_submemolet(
     except Exception as e:
         logger.warning(f"Neo4j submemolet link failed: {e}")
 
+    invalidate_user_memolets_cache(str(current_user.id))
     return db_memolet
 
